@@ -1,0 +1,16 @@
+.{
+    .name = "Zkittle",
+    .version = "0.0.1",
+    .minimum_zig_version = "0.12.0",
+    .paths = .{
+        "src",
+        "build.zig",
+        "build.zig.zon",
+    },
+    .dependencies = .{
+        .@"Zig-ConsoleHelper" = .{
+            .url = "git+https://github.com/bcrist/Zig-ConsoleHelper#41e35796153f056679d3df3d1aaee34f56541e51",
+            .hash = "1220e40224119b919f4fa66b9a016f75b4f75c4fdd890b56cfd7c7d5de860f752c59",
+        },
+    },
+}
