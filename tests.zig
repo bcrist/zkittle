@@ -1,357 +1,587 @@
-test "sx.Reader" {
-    const str =
-        \\(test 1 (1 2)
-        \\  2 -3 ( "  
-        \\" 4 5 6)
-        \\  () a b c
-        \\)
-        \\
-        \\
-        \\ true
-        \\ 0x20
-        \\ 0.35
-        \\ unsigned
-        \\ "hello world"
-        \\ 1 2 3 4
-        \\ "hello world 2"
-        \\ 1 2 3
-        \\ nil 1234
-        \\ x y 1
-        \\ (a asdf)
-        \\ (b 1)
-        \\ (c 2)
-        \\ (d multiple-words)
-        \\
-        ;
-    var stream = std.io.fixedBufferStream(str);
-    var reader = sx.reader(std.testing.allocator, stream.reader().any());
-    defer reader.deinit();
 
-    var buf: [4096]u8 = undefined;
-    var buf_stream = std.io.fixedBufferStream(&buf);
-
-    var ctx = try reader.token_context();
-    try ctx.print_for_string(str, buf_stream.writer(), 80);
-    try expectEqualStrings(
-        \\   1 |(test 1 (1 2)
-        \\     |^^^^^
-        \\   2 |  2 -3 ( "  
-        \\
-    , buf_stream.getWritten());
-    buf_stream.reset();
-
-    try expectEqual(try reader.expression("asdf"), false);
-    try reader.require_expression("test");
-    try expectEqual(try reader.open(), false);
-    try expectEqual(try reader.close(), false);
-    try expectEqual(try reader.require_any_unsigned(usize, 10), @as(usize, 1));
-    try expectEqualStrings(try reader.require_any_expression(), "1");
-    try expectEqual(try reader.any_expression(), null);
-    try reader.ignore_remaining_expression();
-    try expectEqual(try reader.require_any_unsigned(usize, 0), @as(usize, 2));
-    try expectEqual(try reader.require_any_int(i8, 0), @as(i8, -3));
-    try reader.require_open();
-
-    ctx = try reader.token_context();
-    try ctx.print_for_string(str, buf_stream.writer(), 80);
-    try expectEqualStrings(
-        \\   1 |(test 1 (1 2)
-        \\   2 |  2 -3 ( "  
-        \\     |         ^^^
-        \\   3 |" 4 5 6)
-        \\     |^
-        \\   4 |  () a b c
-        \\
-    , buf_stream.getWritten());
-    buf_stream.reset();
-
-    try reader.require_string("  \n");
-    try expectEqual(try reader.string("x"), false);
-    try reader.require_string("4");
-    try expectEqual(try reader.require_any_float(f32), @as(f32, 5));
-    try expectEqualStrings(try reader.require_any_string(), "6");
-    try expectEqual(try reader.any_string(), null);
-    try expectEqual(try reader.any_float(f32), null);
-    try expectEqual(try reader.any_int(u12, 0), null);
-    try expectEqual(try reader.any_unsigned(u12, 0), null);
-    try reader.require_close();
-    try reader.require_open();
-    try reader.require_close();
-    try reader.ignore_remaining_expression();
-
-    ctx = try reader.token_context();
-    try ctx.print_for_string(str, buf_stream.writer(), 80);
-    try expectEqualStrings(
-        \\   7 |
-        \\   8 | true
-        \\     | ^^^^
-        \\   9 | 0x20
-        \\
-    , buf_stream.getWritten());
-    buf_stream.reset();
-
-    const Ctx = struct {
-        pub fn type_name(comptime T: type) []const u8 {
-            const raw = @typeName(T);
-            if (std.mem.lastIndexOfScalar(u8, raw, '.')) |index| {
-                return raw[index + 1 ..];
-            }
-            return raw;
-        }
-    };
-
-    try expectEqual(true, try reader.require_object(std.testing.allocator, bool, Ctx));
-    try expectEqual(0x20, try reader.require_object(std.testing.allocator, u8, Ctx));
-    try expectEqual(0.35, try reader.require_object(std.testing.allocator, f64, Ctx));
-    try expectEqual(std.builtin.Signedness.unsigned, try reader.require_object(std.testing.allocator, std.builtin.Signedness, Ctx));
-
-    const xyz = try reader.require_object(std.testing.allocator, []const u8, Ctx);
-    defer std.testing.allocator.free(xyz);
-    try expectEqualStrings("hello world", xyz);
-
-    const slice = try reader.require_object(std.testing.allocator, []const u32, Ctx);
-    defer std.testing.allocator.free(slice);
-    try expectEqualSlices(u32, &.{ 1, 2, 3, 4 }, slice);
-
-    const ptr = try reader.require_object(std.testing.allocator, *const []const u8, Ctx);
-    defer std.testing.allocator.destroy(ptr);
-    defer std.testing.allocator.free(ptr.*);
-    try expectEqualStrings("hello world 2", ptr.*);
-
-    const arr = try reader.require_object(std.testing.allocator, [3]u4, Ctx);
-    try expectEqualSlices(u4, &.{ 1, 2, 3 }, &arr);
-
-    var opt = try reader.require_object(std.testing.allocator, ?u32, Ctx);
-    try expectEqual(null, opt);
-    opt = try reader.require_object(std.testing.allocator, ?u32, Ctx);
-    try expectEqual(1234, opt);
-
-    const U = union (enum) {
-        x,
-        y: u32
-    };
-    var u = try reader.require_object(std.testing.allocator, U, Ctx);
-    try expectEqual(.x, u);
-    u = try reader.require_object(std.testing.allocator, U, Ctx);
-    try expectEqual(@as(U, .{ .y = 1 }), u);
-
-    const MyEnum = enum {
-        abc,
-        multiple_words,
-    };
-
-    const MyStruct = struct {
-        a: []const u8 = "",
-        b: u8 = 0,
-        c: i64 = 0,
-        d: MyEnum = .abc,
-    };
-    const s = try reader.require_object(std.testing.allocator, MyStruct, Ctx);
-    defer std.testing.allocator.free(s.a);
-    try expectEqualStrings("asdf", s.a);
-    try expectEqual(1, s.b);
-    try expectEqual(2, s.c);
-    try expectEqual(.multiple_words, s.d);
-
-    try reader.require_done();
-}
-
-test "sx.Writer" {
-    const expected =
-      \\(box my-box
-      \\   (dimensions 4.3 7 14)
-      \\   (color red)
-      \\   (contents
-      \\      42
-      \\      "Big Phil's To Do List:\n - paint it black\n - clean up around the house\n"
-      \\      "x y \""
-      \\      false
-      \\      32
-      \\      0.35
-      \\      unsigned
-      \\      "hello world"
-      \\      "hello world 2"
-      \\      1
-      \\      2
-      \\      3
-      \\      4
-      \\      9
-      \\      6
-      \\      5
-      \\      nil
-      \\      1234
-      \\      x
-      \\      y
-      \\      1 (a asdf) (b 123) (c 12355) (d multiple-words))
-      \\)
-    ;
-
-    var buf: [4096]u8 = undefined;
-    var buf_stream = std.io.fixedBufferStream(&buf);
-
-    var writer = sx.writer(std.testing.allocator, buf_stream.writer().any());
-    defer writer.deinit();
-
-    try writer.expression("box");
-    try writer.string("my-box");
-    writer.set_compact(false);
-
-    try writer.expression("dimensions");
-    try writer.float(4.3);
-    try writer.float(7);
-    try writer.float(14);
-    _ = try writer.close();
-
-    try writer.expression("color");
-    try writer.string("red");
-    writer.set_compact(false);
-    _ = try writer.close();
-
-    try writer.expression_expanded("contents");
-    try writer.int(42, 10);
-    try writer.string(
-        \\Big Phil's To Do List:
-        \\ - paint it black
-        \\ - clean up around the house
+test "lexing" {
+    try test_lex(" ",
+        \\literal: 
+        \\eof:
         \\
     );
-    try writer.print_value("x y \"", .{});
-
-    const Ctx = struct {};
-
-    try writer.object(false, Ctx);
-    try writer.object(@as(u8, 0x20), Ctx);
-    try writer.object(@as(f64, 0.35), Ctx);
-    try writer.object(std.builtin.Signedness.unsigned, Ctx);
-
-    const xyz: []const u8 = "hello world";
-    try writer.object(xyz, Ctx);
-
-    const ptr: *const []const u8 = &"hello world 2";
-    try writer.object(ptr, Ctx);
-
-    const slice: []const u32 = &.{ 1, 2, 3, 4 };
-    try writer.object(slice, Ctx);
-
-    try writer.object([_]u4 { 9, 6, 5 }, Ctx);
-
-    var opt: ?u32 = null;
-    try writer.object(opt, Ctx);
-    opt = 1234;
-    try writer.object(opt, Ctx);
-
-    const U = union (enum) {
-        x,
-        y: u32
-    };
-    var u: U = .x;
-    try writer.object(u, Ctx);
-    u = .{ .y = 1 };
-    try writer.object(u, Ctx);
-
-    writer.set_compact(true);
-
-    const MyEnum = enum {
-        abc,
-        multiple_words,
-    };
-    const MyStruct = struct {
-        a: []const u8 = "",
-        b: u8 = 0,
-        c: i64 = 0,
-        d: MyEnum = .abc,
-    };
-    try writer.object(MyStruct{
-        .a = "asdf",
-        .b = 123,
-        .c = 12355,
-        .d = .multiple_words,
-    }, Ctx);
-
-    writer.set_compact(false);
-
-    try writer.done();
-
-    try expectEqualStrings(expected, buf_stream.getWritten());
-}
-
-
-const Inline_Fields_Struct = struct {
-    a: []const u8 = "",
-    inline_items: []const []const u8 = &.{},
-    misc: u32 = 0,
-    multi: []const u32 = &.{},
-};
-
-const Inline_Fields_Ctx = struct {
-    pub const inline_fields = &.{ "a", "inline_items" };
-};
-
-test "read struct with inline fields" {
-    const str =
-        \\asdf abc 123
-        \\(multi 1)
-        \\(misc 5678)
-        \\(multi 7)
-        \\(multi 1234)
+    try test_lex("asdf",
+        \\literal:asdf
+        \\eof:
         \\
-        ;
-    var stream = std.io.fixedBufferStream(str);
-    var reader = sx.reader(std.testing.allocator, stream.reader().any());
-    defer reader.deinit();
+    );
+    try test_lex(
+        \\a b c d
+        \\fffff
+        ,
+        \\literal:a b c d\nfffff
+        \\eof:
+        \\
+    );
+    try test_lex(\\asdf \\ //fasdf
+        ,
+        \\literal:asdf 
+        \\literal:fasdf
+        \\eof:
+        \\
+    );
+    try test_lex(
+        \\\\asdf //
+        \\\\
+        \\\\
+        ,
+        \\id:asdf
+        \\literal:\n
+        \\eof:
+        \\
+    );
+    try test_lex(\\asdf \\ a
+        ,
+        \\literal:asdf 
+        \\id:a
+        \\eof:
+        \\
+    );
+    try test_lex(
+        \\asdf \\ 
+        \\fff
+        ,
+        \\literal:asdf 
+        \\literal:fff
+        \\eof:
+        \\
+    );
 
-    const result = try reader.require_object(std.testing.allocator, Inline_Fields_Struct, Inline_Fields_Ctx);
-    defer std.testing.allocator.free(result.a);
-    defer std.testing.allocator.free(result.inline_items);
-    defer for(result.inline_items) |item| {
-        std.testing.allocator.free(item);
-    };
-    defer std.testing.allocator.free(result.multi);
+    try test_lex(
+        \\\\ 
+        \\\\  
+        \\\\
+        \\fff
+        ,
+        \\literal:fff
+        \\eof:
+        \\
+    );
+    try test_lex(
+        \\\\ ^^a.b.c.*
+        ,
+        \\parent:^
+        \\parent:^
+        \\id:a
+        \\child:.
+        \\id:b
+        \\child:.
+        \\id:c
+        \\child:.
+        \\self:*
+        \\eof:
+        \\
+    );
+    try test_lex(
+        \\\\ ^ a . b :;~?#%
+        ,
+        \\parent:^
+        \\id:a
+        \\child:.
+        \\id:b
+        \\within::
+        \\otherwise:;
+        \\end:~
+        \\condition:?
+        \\count:#
+        \\invalid:%
+        \\eof:
+        \\
+    );
+    try test_lex(
+        \\\\ @raw
+        \\\\@rawwww @include
+        \\\\ @resource @index
+        \\\\ @INDEX index
+        ,
+        \\kw_raw:@raw
+        \\invalid:@rawwww
+        \\kw_include:@include
+        \\kw_resource:@resource
+        \\kw_index:@index
+        \\invalid:@INDEX
+        \\id:index
+        \\eof:
+        \\
+    );
+    try test_lex(
+        \\\\ 123 13 Abcdef123 a;sldkfj
+        ,
+        \\number:123
+        \\number:13
+        \\id:Abcdef123
+        \\id:a
+        \\otherwise:;
+        \\id:sldkfj
+        \\eof:
+        \\
+    );
+    try test_lex(
+        \\\\ "a b c"
+        ,
+        \\id:a b c
+        \\eof:
+        \\
+    );
 
-    try expectEqualStrings("asdf", result.a);
-    try expectEqual(2, result.inline_items.len);
-    try expectEqualStrings("abc", result.inline_items[0]);
-    try expectEqualStrings("123", result.inline_items[1]);
+    try test_lex(
+        \\\\ $ "a b c"
+        \\\\ asdf
+        ,
+        \\id:asdf
+        \\eof:
+        \\
+    );
 
-    try expectEqual(5678, result.misc);
-    try expectEqual(3, result.multi.len);
-    try expectEqual(1, result.multi[0]);
-    try expectEqual(7, result.multi[1]);
-    try expectEqual(1234, result.multi[2]);
+    try test_lex(
+        \\\\ $ "a b c" // asdf
+        ,
+        \\literal: asdf
+        \\eof:
+        \\
+    );
 }
 
-test "write struct with inline fields" {
-     const expected =
-        \\asdf
+fn test_lex(src: []const u8, expected: []const u8) !void {
+    var tokens = try Token.lex(std.testing.allocator, src);
+    defer tokens.deinit(std.testing.allocator);
+
+    var temp = std.ArrayList(u8).init(std.testing.allocator);
+    defer temp.deinit();
+
+    for (tokens.items(.kind), tokens.items(.span)) |kind, span| {
+        try temp.writer().print("{s}:{}\n", .{ @tagName(kind), std.zig.fmtEscapes(span) });
+    }
+
+    try std.testing.expectEqualStrings(expected, temp.items);
+}
+
+
+test "parsing" {
+    try test_parse(
+        \\Hellorld!
+        ,
+        \\print_literal: "Hellorld!"
+        \\
+    );
+
+    try test_parse(
+        \\\\ whatever
+        ,
+        \\dupe_ref_0
+        \\field: "whatever"
+        \\print_ref_escaped
+        \\
+    );
+
+    try test_parse(
+        \\\\ #
+        ,
+        \\dupe_ref_0
+        \\as_number
+        \\number_to_ref
+        \\print_ref_escaped
+        \\
+    );
+
+    try test_parse(
+        \\\\ @resource "test.htm"
+        \\\\ @include whatever
+        ,
+        \\print_literal: "test resource content"
+        \\print_literal: "test include content"
+        \\dupe_ref_0
+        \\field: "included_field"
+        \\print_ref_escaped
+        \\
+    );
+
+    try test_parse(
+        \\\\ @raw ax."something here".#.1.c
+        ,
+        \\dupe_ref_0
+        \\field: "ax"
+        \\field: "something here"
+        \\as_number
+        \\number_to_ref
+        \\index: 1
+        \\field: "c"
+        \\print_ref_raw
+        \\
+    );
+
+    try test_parse(
+        \\\\ @index
+        ,
+        \\print_loop_index
+        \\
+    );
+
+    try test_parse(
+        \\\\ something? 1 ~
+        ,
+        \\dupe_ref_0
+        \\field: "something"
+        \\as_number
+        \\pop_and_skip_if_zero: 3
+        \\dupe_ref_0
+        \\index: 1
+        \\print_ref_escaped
+        \\
+    );
+
+    try test_parse(
+        \\\\ something?
         \\abc
-        \\123
-        \\(misc 5678)
-        \\(multi 1)
-        \\(multi 7)
-        \\(multi 1234)
-        ;
+        \\\\ ; whatever ~
+        ,
+        \\dupe_ref_0
+        \\field: "something"
+        \\as_number
+        \\pop_and_skip_if_zero: 2
+        \\print_literal: "abc\n"
+        \\skip: 3
+        \\dupe_ref_0
+        \\field: "whatever"
+        \\print_ref_escaped
+        \\
+    );
 
-    const obj: Inline_Fields_Struct = .{
-        .a = "asdf",
-        .inline_items = &.{ "abc", "123" },
-        .misc = 5678,
-        .multi = &.{ 1, 7, 1234 },
-    };
+    try test_parse(
+        \\\\ a?
+        \\1
+        \\\\    b?
+        \\2
+        \\\\    ~
+        \\3
+        \\\\ ;
+        \\4
+        \\\\    c?
+        \\5
+        \\\\    ;
+        \\6
+        \\\\    ~
+        \\7
+        \\\\ ~
+        \\8
+        \\
+        ,
+        \\dupe_ref_0
+        \\field: "a"
+        \\as_number
+        \\pop_and_skip_if_zero: 8
+        \\print_literal: "1\n"
+        \\dupe_ref_0
+        \\field: "b"
+        \\as_number
+        \\pop_and_skip_if_zero: 1
+        \\print_literal: "2\n"
+        \\print_literal: "3\n"
+        \\skip: 9
+        \\print_literal: "4\n"
+        \\dupe_ref_0
+        \\field: "c"
+        \\as_number
+        \\pop_and_skip_if_zero: 2
+        \\print_literal: "5\n"
+        \\skip: 1
+        \\print_literal: "6\n"
+        \\print_literal: "7\n"
+        \\print_literal: "8\n"
+        \\
+    );
 
-    var buf: [4096]u8 = undefined;
-    var buf_stream = std.io.fixedBufferStream(&buf);
+    try test_parse(
+        \\\\ something:
+        \\abc
+        \\\\ ; whatever ~
+        ,
+        \\dupe_ref_0
+        \\field: "something"
+        \\begin_loop
+        \\skip_if_equal: 6
+        \\dupe_ref_0_indexed
+        \\print_literal: "abc\n"
+        \\pop_ref
+        \\increment_and_retry_if_less: 4
+        \\end_loop
+        \\skip: 4
+        \\end_loop
+        \\dupe_ref_0
+        \\field: "whatever"
+        \\print_ref_escaped
+        \\
+    );
 
-    var writer = sx.writer(std.testing.allocator, buf_stream.writer().any());
-    defer writer.deinit();
+    try test_parse(
+        \\\\ a:
+        \\1
+        \\\\    b:
+        \\2
+        \\\\    ~
+        \\3
+        \\\\ ;
+        \\4
+        \\\\    c:
+        \\5
+        \\\\    ;
+        \\6
+        \\\\    ~
+        \\7
+        \\\\ ~
+        \\8
+        \\
+        ,
+        \\dupe_ref_0
+        \\field: "a"
+        \\begin_loop
+        \\skip_if_equal: 16
+        \\dupe_ref_0_indexed
+        \\print_literal: "1\n"
+        \\dupe_ref_0
+        \\field: "b"
+        \\begin_loop
+        \\skip_if_equal: 4
+        \\dupe_ref_0_indexed
+        \\print_literal: "2\n"
+        \\pop_ref
+        \\increment_and_retry_if_less: 10
+        \\end_loop
+        \\print_literal: "3\n"
+        \\pop_ref
+        \\increment_and_retry_if_less: 4
+        \\end_loop
+        \\skip: 15
+        \\end_loop
+        \\print_literal: "4\n"
+        \\dupe_ref_0
+        \\field: "c"
+        \\begin_loop
+        \\skip_if_equal: 6
+        \\dupe_ref_0_indexed
+        \\print_literal: "5\n"
+        \\pop_ref
+        \\increment_and_retry_if_less: 26
+        \\end_loop
+        \\skip: 2
+        \\end_loop
+        \\print_literal: "6\n"
+        \\print_literal: "7\n"
+        \\print_literal: "8\n"
+        \\
+    );
 
-    try writer.object(obj, Inline_Fields_Ctx);
-    try writer.done();
+    try test_parse(
+        \\\\ something: ^# ^^something.0 ~
+        ,
+        \\dupe_ref_0
+        \\field: "something"
+        \\begin_loop
+        \\skip_if_equal: 11
+        \\dupe_ref_0_indexed
+        \\dupe_ref: 1
+        \\as_number
+        \\number_to_ref
+        \\print_ref_escaped
+        \\dupe_ref: 2
+        \\field: "something"
+        \\index: 0
+        \\print_ref_escaped
+        \\pop_ref
+        \\increment_and_retry_if_less: 4
+        \\end_loop
+        \\
+    );
 
-    try expectEqualStrings(expected, buf_stream.getWritten());
+    try test_parse(
+        \\\\$ asdfasdfasdf // asdf
+        ,
+        \\print_literal: " asdf"
+        \\
+    );
+    try test_parse(
+        \\\\$ asdfasdfasdf
+        \\\\ gg // asdf
+        ,
+        \\dupe_ref_0
+        \\field: "gg"
+        \\print_ref_escaped
+        \\print_literal: " asdf"
+        \\
+    );
 }
 
-const expectEqual = std.testing.expectEqual;
-const expectEqualSlices = std.testing.expectEqualSlices;
-const expectEqualStrings = std.testing.expectEqualStrings;
-const sx = @import("sx");
+var test_include: ?Source = null;
+
+fn test_include_callback(id: []const u8) anyerror!*const Source {
+    _ = id;
+
+    if (test_include) |*source| {
+        return source;
+    }
+
+    const src_str = 
+        \\test include content\\ included_field
+        ;
+
+    test_include = try Source.init_buf(std.heap.page_allocator, "included_source", src_str);
+
+    return &test_include.?;
+}
+
+fn test_resource_callback(id: []const u8) anyerror![]const u8 {
+    _ = id;
+    return "test resource content";
+}
+
+fn test_parse(source_str: []const u8, expected: []const u8) !void {
+    var parser: Parser = .{
+        .gpa = std.testing.allocator,
+        .include_callback = test_include_callback,
+        .resource_callback = test_resource_callback,
+    };
+    defer parser.deinit();
+
+    var source = try Source.init_buf(std.testing.allocator, "source", source_str);
+    defer source.deinit();
+
+    try parser.append(&source);
+
+    var template = try parser.finish(std.testing.allocator);
+    defer template.deinit(std.testing.allocator);
+
+    var temp = std.ArrayList(u8).init(std.testing.allocator);
+    defer temp.deinit();
+
+    var writer = temp.writer();
+
+    for (0.., template.opcodes) |i, opcode| {
+        const operands = template.operands[i];
+        try writer.writeAll(@tagName(opcode));
+        switch (opcode) {
+            .print_literal, .field => {
+                const ref = operands.literal_string;
+                const span = template.literal_data[ref.offset..][0..ref.length];
+                try writer.print(": \"{}\"", .{ std.zig.fmtEscapes(span) });
+            },
+            .skip_if_equal, .increment_and_retry_if_less,
+            .index, .dupe_ref, .skip, .pop_and_skip_if_zero => {
+                try writer.print(": {}", .{ operands.offset });
+            },
+            .print_ref_raw, .print_ref_escaped, .print_loop_index,
+            .begin_loop, .end_loop, .dupe_ref_0_indexed, .pop_ref,
+            .as_number, .number_to_ref, .dupe_ref_0 => {},
+
+        }
+        try writer.writeByte('\n');
+    }
+
+    try std.testing.expectEqualStrings(expected, temp.items);
+}
+
+test "render" {
+    try test_template(
+        \\abcd
+        \\asdf
+        , {},
+        \\abcd
+        \\asdf
+    );
+
+    try test_template(
+        \\\\//abcd\\//
+        \\\\//asdf\\
+        \\
+        , {},
+        \\abcd
+        \\asdf
+    );
+
+    try test_template(
+        \\\\ *
+        , .{ .a = @as(u16, 1), .span = "asdfasdf" },
+        \\1asdfasdf
+    );
+
+    try test_parse(
+        \\\\ hello: * //
+        \\\\ ~
+        //, .{ .hello = .{ "abc", "asdfasdf" } },
+        ,
+        \\dupe_ref_0
+        \\field: "hello"
+        \\begin_loop
+        \\skip_if_equal: 6
+        \\dupe_ref_0_indexed
+        \\dupe_ref_0
+        \\print_ref_escaped
+        \\print_literal: "\n"
+        \\pop_ref
+        \\increment_and_retry_if_less: 4
+        \\end_loop
+        \\
+    );
+
+    try test_template(
+        \\\\ hello: * //
+        \\\\ ~
+        , .{ .hello = .{ "abc", "asdfasdf" } },
+        \\abc
+        \\asdfasdf
+        \\
+    );
+
+    const My_Union = union (enum) {
+        a: u32,
+        b: i16,
+        c: []const u8,
+    };
+
+    try test_template(
+        \\a:\\a//
+        \\b:\\b//
+        \\c:\\c//
+        \\
+        , @as(My_Union, .{ .c = "1234" }),
+        \\a:
+        \\b:
+        \\c:1234
+        \\
+    );
+
+}
+
+fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !void {
+    var parser: Parser = .{
+        .gpa = std.testing.allocator,
+        .include_callback = test_include_callback,
+        .resource_callback = test_resource_callback,
+    };
+    defer parser.deinit();
+
+    var source = try Source.init_buf(std.testing.allocator, "source", source_str);
+    defer source.deinit();
+
+    try parser.append(&source);
+
+    var template = try parser.finish(std.testing.allocator);
+    defer template.deinit(std.testing.allocator);
+
+    var temp = std.ArrayList(u8).init(std.testing.allocator);
+    defer temp.deinit();
+
+    const writer = temp.writer();
+    try template.render(writer.any(), value, .{});
+    try std.testing.expectEqualStrings(expected, temp.items);
+}
+
+const Template = @import("src/Template.zig");
+const Parser = @import("src/Parser.zig");
+const Source = @import("src/Source.zig");
+const Token = @import("src/Token.zig");
 const std = @import("std");
