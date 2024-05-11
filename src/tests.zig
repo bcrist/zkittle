@@ -128,6 +128,23 @@ test "lexing" {
         \\eof:
         \\
     );
+
+    try test_lex(
+        \\\\ $ "a b c"
+        \\\\ asdf
+        ,
+        \\id:asdf
+        \\eof:
+        \\
+    );
+
+    try test_lex(
+        \\\\ $ "a b c" // asdf
+        ,
+        \\literal: asdf
+        \\eof:
+        \\
+    );
 }
 
 fn test_lex(src: []const u8, expected: []const u8) !void {
@@ -380,6 +397,23 @@ test "parsing" {
         \\end_loop
         \\
     );
+
+    try test_parse(
+        \\\\$ asdfasdfasdf // asdf
+        ,
+        \\print_literal: " asdf"
+        \\
+    );
+    try test_parse(
+        \\\\$ asdfasdfasdf
+        \\\\ gg // asdf
+        ,
+        \\dupe_ref_0
+        \\field: "gg"
+        \\print_ref_escaped
+        \\print_literal: " asdf"
+        \\
+    );
 }
 
 var test_include: ?Source = null;
@@ -499,6 +533,24 @@ test "render" {
         , .{ .hello = .{ "abc", "asdfasdf" } },
         \\abc
         \\asdfasdf
+        \\
+    );
+
+    const My_Union = union (enum) {
+        a: u32,
+        b: i16,
+        c: []const u8,
+    };
+
+    try test_template(
+        \\a:\\a//
+        \\b:\\b//
+        \\c:\\c//
+        \\
+        , @as(My_Union, .{ .c = "1234" }),
+        \\a:
+        \\b:
+        \\c:1234
         \\
     );
 

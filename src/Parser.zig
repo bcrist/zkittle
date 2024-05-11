@@ -186,8 +186,9 @@ fn parse_ref(self: *Parser) !bool {
     }
 
     switch (self.token_kinds[self.next_token]) {
-        .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_index, .condition, .within, .otherwise, .end, .child, => return false,
-        else => {},
+        .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_index,
+        .condition, .within, .otherwise, .end, .child => return false,
+        .id, .number, .parent, .count, .self => {},
     }
 
     var parent_count: usize = 0;
@@ -223,6 +224,7 @@ fn parse_field_or_index_or_count(self: *Parser) !void {
         });
     } else {
         try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, or '#'");
+        return error.InvalidTemplate;
     }
 }
 

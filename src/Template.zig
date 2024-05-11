@@ -54,6 +54,7 @@ pub const Literal_Ref = struct {
 };
 
 pub const Ref = union (enum) {
+    nil,
     collection: Collection,
     structure: Structure,
     value: Value,
@@ -122,6 +123,7 @@ fn literal(self: Template, pc: usize) []const u8 {
 
 fn print_ref(ref: Ref, writer: std.io.AnyWriter, escape: bool) anyerror!void {
     switch (ref) {
+        .nil => {},
         .collection => |c| {
             for (0..c.size) |i| {
                 try print_ref(c.element(c.data, i), writer, escape);
@@ -138,6 +140,7 @@ fn print_ref(ref: Ref, writer: std.io.AnyWriter, escape: bool) anyerror!void {
 
 fn ref_to_number(ref: Ref) usize {
     return switch (ref) {
+        .nil => 0,
         .collection => |c| c.size,
         .structure => 1,
         .value => |v| v.as_number(v.data),
@@ -164,33 +167,35 @@ fn number_ref(n: usize) Ref {
 
 fn lookup_field(self: Template, ref: Ref, pc: usize) !Ref {
     switch (ref) {
+        .nil => return .nil,
         .structure => |s| {
             if (s.field(s.data, self.literal(pc))) |r| {
                 return r;
             } else {
-                log.err("No field named {s} (pc={d})", .{ self.literal(pc), pc });
-                return error.SchemaMismatch;
+                log.debug("No field named {s} (pc={d})", .{ self.literal(pc), pc });
+                return .nil;
             }
         },
         .collection => {
-            log.err("Expected struct with field named {s}; found collection (pc={d})", .{ self.literal(pc), pc });
-            return error.SchemaMismatch;
+            log.debug("Expected struct with field named {s}; found collection (pc={d})", .{ self.literal(pc), pc });
+            return .nil;
         },
         .value => {
-            log.err("Expected struct with field named {s}; found value (pc={d})", .{ self.literal(pc), pc });
-            return error.SchemaMismatch;
+            log.debug("Expected struct with field named {s}; found value (pc={d})", .{ self.literal(pc), pc });
+            return .nil;
         },
     }
 }
 
 fn lookup_index(ref: Ref, index: usize, pc: usize) !Ref {
     switch (ref) {
+        .nil => return .nil,
         .collection => |c| {
             if (index < c.size) {
                 return c.element(c.data, index);
             } else {
-                log.err("Expected collection of size > {d}; found size {d} (pc={d})", .{ index, c.size, pc });
-                return error.SchemaMismatch;
+                log.debug("Expected collection of size > {d}; found size {d} (pc={d})", .{ index, c.size, pc });
+                return .nil;
             }
         },
         .structure => {
@@ -198,8 +203,8 @@ fn lookup_index(ref: Ref, index: usize, pc: usize) !Ref {
                 // This is needed for the "within" syntax
                 return ref;
             }
-            log.err("Expected collection of size > {d}; found structure (pc={d})", .{ index, pc });
-            return error.SchemaMismatch;
+            log.debug("Expected collection of size > {d}; found structure (pc={d})", .{ index, pc });
+            return .nil;
         },
         .value => return ref, // this is needed in order for optionals to work with the "within" syntax
     }
@@ -365,6 +370,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref) anyerror
 
 pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Escape_Fn, comptime Context: anytype) Ref {
     return switch (@typeInfo(T)) {
+        .Void, .Null, .Undefined => .nil,
         .Bool => .{ .value = .{
             .data = ptr,
             .as_number = Bool_VTable(Context).as_number,
@@ -385,16 +391,11 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
             .as_number = Enum_VTable(T, escape_fn, Context).as_number,
             .print = Enum_VTable(T, escape_fn, Context).print,
         }},
-        .Void, .Null, .Undefined => .{ .value = .{
-            .data = undefined,
-            .as_number = Void_VTable(Context).as_number,
-            .print = Void_VTable(Context).print,
-        }},
         .Pointer => |info| {
             if (info.size == .Slice) {
                 if (info.child == u8) {
                     return .{ .value = .{
-                        .data = ptr,
+                        .data = @ptrCast(ptr),
                         .as_number = String_VTable(escape_fn, Context).as_number,
                         .print = String_VTable(escape_fn, Context).print,
                     }};
@@ -454,28 +455,6 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
         },
         .ErrorUnion => @compileError("Can't serialize error set; did you forget a 'try'?"),
         else => @compileError("Unsupported type: " ++ @typeName(T)),
-    };
-}
-
-fn Void_VTable(comptime Context: anytype) type {
-    return struct {
-        pub fn as_number(self: *const anyopaque) usize {
-            _ = self;
-            return 0;
-        }
-
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
-            _ = self;
-            switch (@typeInfo(@TypeOf(Context))) {
-                .Fn => {
-                    try Context(writer, escape);
-                },
-                .Pointer => {
-                    try writer.writeAll(Context);
-                },
-                else => {},
-            }
-        }
     };
 }
 

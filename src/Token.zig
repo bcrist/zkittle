@@ -139,6 +139,18 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                     i = j;
                 },
 
+                '$' => {
+                    var j = i + 1;
+                    while (j < remaining.len) : (j += 1) switch (remaining[j]) {
+                        '/' => if (j + 1 < remaining.len and remaining[j + 1] == '/') {
+                            break;
+                        },
+                        '\n' => break,
+                        else => {},
+                    };
+                    i = j;
+                },
+
                 else => {
                     try tokens.append(allocator, .{ .kind = .invalid, .span = remaining[i .. i + 1] });
                     i += 1;
