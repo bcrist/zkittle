@@ -1,0 +1,47 @@
+{
+    "name": "zkittle",
+    "icon": "images/icon.png",
+    "displayName": "Zkittle Template Syntax",
+    "description": "Provides syntax highlighting for Zkittle templates.",
+    "version": "0.0.1",
+    "publisher": "bcrist",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/bcrist/zkittle"
+    },
+    "license": "MIT",
+    "engines": {
+        "vscode": "^1.5.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "zkittle",
+                "aliases": [
+                    "Zkittle Template"
+                ],
+                "extensions": [
+                    ".zkittle",
+                    ".zk"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "zkittle",
+                "scopeName": "text.html.zkittle",
+                "path": "./syntaxes/zkittle.tmLanguage.json"
+            }
+        ],
+        "htmlLanguageParticipants": [
+            {
+                "languageId": "zkittle",
+                "autoInsert": true
+            }
+        ]
+    }
+}
