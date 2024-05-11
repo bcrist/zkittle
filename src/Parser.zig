@@ -411,7 +411,7 @@ fn intern_literal(self: *Parser, literal: []const u8) !Template.Literal_Ref {
     if (!gop.found_existing) {
         const start = self.literal_data.items.len;
         self.literal_data.appendSliceAssumeCapacity(literal);
-        gop.key_ptr.* = literal;
+        gop.key_ptr.* = self.literal_data.items[start..];
         gop.value_ptr.* = .{
             .offset = @intCast(start),
             .length = @intCast(literal.len),
