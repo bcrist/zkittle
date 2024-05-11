@@ -270,6 +270,7 @@ fn add_dupe_ref_instruction(self: *Parser, options: Dupe_Ref_Options) !void {
 }
 
 fn add_print_literal_instruction(self: *Parser, literal: []const u8) !void {
+    if (literal.len == 0) return;
     try self.add_literal_instruction(.print_literal, literal);
 }
 
