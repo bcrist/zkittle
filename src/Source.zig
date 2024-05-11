@@ -25,7 +25,7 @@ pub fn init_file(allocator: std.mem.Allocator, dir: *std.fs.Dir, path: []const u
     errdefer allocator.free(realpath);
 
     const stat = try dir.statFile(realpath);
-    const source = try dir.readFileAllocOptions(allocator, realpath, 1_000_000_000, stat.size, 0, null);
+    const source = try dir.readFileAllocOptions(allocator, realpath, 1_000_000_000, stat.size, 1, null);
     errdefer allocator.free(source);
 
     const tokens = try Token.lex(allocator, source);
