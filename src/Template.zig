@@ -22,24 +22,24 @@ pub const Instruction = struct {
 };
 
 pub const Opcode = enum (u8) {
-    print_literal = '!', // literal_ref
-    as_number = '#',
-    print_ref_raw = '$',
-    print_ref_escaped = '%',
-    field = '&', // literal_ref
-    index = '\'', // offset
-    begin_loop = '(',
-    end_loop = ')',
-    number_to_ref = '*',
-    skip = '+', // offset
-    pop_ref = ',',
-    dupe_ref = '-', // offset
-    dupe_ref_0 = '.',
-    skip_if_equal = '/', // offset
-    pop_and_skip_if_zero = '0', // offset
-    dupe_ref_0_indexed = '1',
-    increment_and_retry_if_less = '2', // offset
-    print_loop_index = '3',
+    print_literal, // literal_ref
+    as_number,
+    print_ref_raw,
+    print_ref_escaped,
+    field, // literal_ref
+    index, // offset
+    begin_loop,
+    end_loop,
+    number_to_ref,
+    skip, // offset
+    pop_ref,
+    dupe_ref, // offset
+    dupe_ref_0,
+    skip_if_equal, // offset
+    pop_and_skip_if_zero, // offset
+    dupe_ref_0_indexed,
+    increment_and_retry_if_less, // offset
+    print_loop_index,
 };
 
 pub const Operands = union {
@@ -82,14 +82,16 @@ opcodes: []const Opcode,
 operands: [*]const Operands,
 literal_data: []const u8,
 
-pub fn init_static(comptime instruction_count: usize, comptime data: []const u8) Template {
+pub fn init_static(comptime instruction_count: usize, comptime data: []const usize) Template {
+    std.debug.assert(@alignOf(usize) >= @alignOf(Operands));
+    const byte_data = std.mem.sliceAsBytes(data);
     const end_of_operands = instruction_count * @sizeOf(Operands);
-    const start_of_opcodes = comptime std.mem.alignForward(comptime_int, end_of_operands, @alignOf(Opcode));
+    const start_of_opcodes = comptime std.mem.alignForward(usize, end_of_operands, @alignOf(Opcode));
     const end_of_opcodes = start_of_opcodes + instruction_count * @sizeOf(Opcode);
     return comptime .{
-        .opcodes = @ptrCast(data[start_of_opcodes..end_of_opcodes]),
-        .operands = @ptrCast(data),
-        .literal_data = data[end_of_opcodes..],
+        .opcodes = @ptrCast(byte_data[start_of_opcodes..end_of_opcodes]),
+        .operands = @ptrCast(byte_data),
+        .literal_data = byte_data[end_of_opcodes..],
     };
 }
 
