@@ -403,7 +403,7 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
                     }};
                 } else {
                     return .{ .collection = .{
-                        .data = ptr.ptr,
+                        .data = @ptrCast(ptr.ptr),
                         .size = ptr.len,
                         .element = Array_VTable(info.child, escape_fn, Context).element,
                     }};
@@ -415,13 +415,13 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
         .Array => |info| {
             if (info.child == u8) {
                 return .{ .value = .{
-                    .data = ptr,
+                    .data = @ptrCast(ptr),
                     .as_number = Array_String_VTable(info.len, escape_fn, Context).as_number,
                     .print = Array_String_VTable(info.len, escape_fn, Context).print,
                 }};
             } else {
                 return .{ .collection = .{
-                    .data = ptr,
+                    .data = @ptrCast(ptr),
                     .size = info.len,
                     .element = Array_VTable(info.child, escape_fn, Context).element,
                 }};
