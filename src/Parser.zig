@@ -1,5 +1,9 @@
 gpa: std.mem.Allocator,
+
+/// N.B. The memory referenced by the returned source must remain stable and constant until the parse is complete!
 include_callback: *const fn (id: []const u8) anyerror!Source,
+
+/// N.B. The memory returned must remain stable and constant until the parse is complete!
 resource_callback: *const fn (id: []const u8) anyerror![]const u8,
 
 instructions: std.MultiArrayList(Template.Instruction) = .{},
@@ -411,7 +415,7 @@ fn intern_literal(self: *Parser, literal: []const u8) !Template.Literal_Ref {
     if (!gop.found_existing) {
         const start = self.literal_data.items.len;
         self.literal_data.appendSliceAssumeCapacity(literal);
-        gop.key_ptr.* = self.literal_data.items[start..];
+        gop.key_ptr.* = literal;
         gop.value_ptr.* = .{
             .offset = @intCast(start),
             .length = @intCast(literal.len),
