@@ -22,24 +22,24 @@ pub const Instruction = struct {
 };
 
 pub const Opcode = enum (u8) {
-    print_literal, // literal_ref
-    print_ref_raw,
-    print_ref_escaped,
-    print_loop_index,
-    field, // literal_ref
-    index, // offset
-    as_number,
-    number_to_ref,
-    dupe_ref, // offset
-    dupe_ref_0,
-    pop_and_skip_if_zero, // offset
-    skip, // offset
-    begin_loop,
-    end_loop,
-    skip_if_equal, // offset
-    dupe_ref_0_indexed,
-    pop_ref,
-    increment_and_retry_if_less, // offset
+    print_literal = '!', // literal_ref
+    as_number = '#',
+    print_ref_raw = '$',
+    print_ref_escaped = '%',
+    field = '&', // literal_ref
+    index = '\'', // offset
+    begin_loop = '(',
+    end_loop = ')',
+    number_to_ref = '*',
+    skip = '+', // offset
+    pop_ref = ',',
+    dupe_ref = '-', // offset
+    dupe_ref_0 = '.',
+    skip_if_equal = '/', // offset
+    pop_and_skip_if_zero = '0', // offset
+    dupe_ref_0_indexed = '1',
+    increment_and_retry_if_less = '2', // offset
+    print_loop_index = '3',
 };
 
 pub const Operands = union {
