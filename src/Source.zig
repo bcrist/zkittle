@@ -1,4 +1,3 @@
-allocator: std.mem.Allocator,
 path: []const u8,
 source: []const u8,
 tokens: Token.List,
@@ -15,7 +14,6 @@ pub fn init_buf(allocator: std.mem.Allocator, path: []const u8, source: []const 
     const tokens = try Token.lex(allocator, source_copy);
 
     return .{
-        .allocator = allocator,
         .path = path_copy,
         .source = source_copy,
         .tokens = tokens,
@@ -33,17 +31,16 @@ pub fn init_file(allocator: std.mem.Allocator, dir: *std.fs.Dir, path: []const u
     const tokens = try Token.lex(allocator, source);
 
     return .{
-        .allocator = allocator,
         .path = realpath,
         .source = source,
         .tokens = tokens,
     };
 }
 
-pub fn deinit(self: *Source) void {
-    self.allocator.free(self.path);
-    self.allocator.free(self.source);
-    self.tokens.deinit(self.allocator);
+pub fn deinit(self: *Source, allocator: std.mem.Allocator) void {
+    allocator.free(self.path);
+    allocator.free(self.source);
+    self.tokens.deinit(allocator);
 }
 
 pub fn report_error(self: Source, token: usize, desc: []const u8) !void {

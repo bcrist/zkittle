@@ -1,5 +1,5 @@
 gpa: std.mem.Allocator,
-include_callback: *const fn (id: []const u8) anyerror!*const Source,
+include_callback: *const fn (id: []const u8) anyerror!Source,
 resource_callback: *const fn (id: []const u8) anyerror![]const u8,
 
 instructions: std.MultiArrayList(Template.Instruction) = .{},
@@ -7,7 +7,7 @@ literal_data: std.ArrayListUnmanaged(u8) = .{},
 literal_dedup: std.StringHashMapUnmanaged(Template.Literal_Ref) = .{},
 ref_stack_depth: usize = 0,
 
-include_stack: std.ArrayListUnmanaged(*const Source) = .{},
+include_stack: std.ArrayListUnmanaged(Source) = .{},
 
 token_kinds: []const Token.Kind = &.{},
 token_spans: []const []const u8 = &.{},
@@ -22,11 +22,11 @@ pub fn deinit(self: *Parser) void {
     self.include_stack.deinit(self.gpa);
 }
 
-pub fn append(self: *Parser, source: *const Source) anyerror!void {
+pub fn append(self: *Parser, source: Source) anyerror!void {
     const old_next = self.next_token;
 
     for (self.include_stack.items) |other_source| {
-        if (other_source == source) {
+        if (std.mem.eql(u8, source.path, other_source.path)) {
             return error.RecursiveTemplate;
         }
     }

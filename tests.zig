@@ -418,10 +418,10 @@ test "parsing" {
 
 var test_include: ?Source = null;
 
-fn test_include_callback(id: []const u8) anyerror!*const Source {
+fn test_include_callback(id: []const u8) anyerror!Source {
     _ = id;
 
-    if (test_include) |*source| {
+    if (test_include) |source| {
         return source;
     }
 
@@ -431,7 +431,7 @@ fn test_include_callback(id: []const u8) anyerror!*const Source {
 
     test_include = try Source.init_buf(std.heap.page_allocator, "included_source", src_str);
 
-    return &test_include.?;
+    return test_include.?;
 }
 
 fn test_resource_callback(id: []const u8) anyerror![]const u8 {
@@ -448,9 +448,9 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
     defer parser.deinit();
 
     var source = try Source.init_buf(std.testing.allocator, "source", source_str);
-    defer source.deinit();
+    defer source.deinit(std.testing.allocator);
 
-    try parser.append(&source);
+    try parser.append(source);
 
     var template = try parser.finish(std.testing.allocator);
     defer template.deinit(std.testing.allocator);
@@ -565,9 +565,9 @@ fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !
     defer parser.deinit();
 
     var source = try Source.init_buf(std.testing.allocator, "source", source_str);
-    defer source.deinit();
+    defer source.deinit(std.testing.allocator);
 
-    try parser.append(&source);
+    try parser.append(source);
 
     var template = try parser.finish(std.testing.allocator);
     defer template.deinit(std.testing.allocator);

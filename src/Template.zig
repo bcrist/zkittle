@@ -753,11 +753,11 @@ fn Child_Context_Type(comptime Context: anytype, comptime field: []const u8) typ
     return type;
 }
 
-fn escape_none(str: []const u8, writer: std.io.AnyWriter) anyerror!void {
+pub fn escape_none(str: []const u8, writer: std.io.AnyWriter) anyerror!void {
     try writer.writeAll(str);
 }
 
-fn escape_html(str: []const u8, writer: std.io.AnyWriter) anyerror!void {
+pub fn escape_html(str: []const u8, writer: std.io.AnyWriter) anyerror!void {
     var iter = std.mem.splitAny(u8, str, "&<>\"'");
     while (iter.next()) |chunk| {
         try writer.writeAll(chunk);
