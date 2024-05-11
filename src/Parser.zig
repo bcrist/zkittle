@@ -55,13 +55,16 @@ pub fn append(self: *Parser, source: Source) anyerror!void {
     self.next_token = old_next;
 }
 
-pub fn finish(self: *Parser, allocator: std.mem.Allocator) !Template {
+pub fn finish(self: *Parser, allocator: std.mem.Allocator, clear_literal_data: bool) !Template {
     const template = try Template.init(allocator, self.instructions, self.literal_data.items);
 
     self.instructions.len = 0;
-    self.literal_data.clearRetainingCapacity();
-    self.literal_dedup.clearRetainingCapacity();
     self.ref_stack_depth = 0;
+    
+    if (clear_literal_data) {
+        self.literal_data.clearRetainingCapacity();
+        self.literal_dedup.clearRetainingCapacity();
+    }
 
     return template;
 }

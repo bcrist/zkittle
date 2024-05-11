@@ -42,13 +42,13 @@ pub const Opcode = enum (u8) {
     print_loop_index,
 };
 
-pub const Operands = union {
+pub const Operands = extern union {
     none: void,
     offset: usize,
     literal_string: Literal_Ref,
 };
 
-pub const Literal_Ref = struct {
+pub const Literal_Ref = extern struct {
     offset: u32,
     length: u32,
 };
@@ -82,17 +82,33 @@ opcodes: []const Opcode,
 operands: [*]const Operands,
 literal_data: []const u8,
 
-pub fn init_static(comptime instruction_count: usize, comptime data: []const usize) Template {
-    std.debug.assert(@alignOf(usize) >= @alignOf(Operands));
-    const byte_data = std.mem.sliceAsBytes(data);
+pub fn init_static(instruction_count: usize, instruction_data: []const u64, literal_data: []const u8) Template {
+    std.debug.assert(@sizeOf(u64) == @sizeOf(Operands));
+    std.debug.assert(@alignOf(u64) == @alignOf(Operands));
+    const byte_data = std.mem.sliceAsBytes(instruction_data);
     const end_of_operands = instruction_count * @sizeOf(Operands);
-    const start_of_opcodes = comptime std.mem.alignForward(usize, end_of_operands, @alignOf(Opcode));
-    const end_of_opcodes = start_of_opcodes + instruction_count * @sizeOf(Opcode);
-    return comptime .{
-        .opcodes = @ptrCast(byte_data[start_of_opcodes..end_of_opcodes]),
+    const end_of_opcodes = end_of_operands + instruction_count * @sizeOf(Opcode);
+    return .{
+        .opcodes = @ptrCast(byte_data[end_of_operands..end_of_opcodes]),
         .operands = @ptrCast(byte_data),
-        .literal_data = byte_data[end_of_opcodes..],
+        .literal_data = literal_data,
     };
+}
+
+pub fn get_static_instruction_data(self: *Template, allocator: std.mem.Allocator) ![]u64 {
+    std.debug.assert(@sizeOf(u64) == @sizeOf(Operands));
+
+    const bytes_needed = (@sizeOf(Operands) + @sizeOf(Opcode)) * self.opcodes.len;
+    const words_needed = std.mem.alignForward(usize, bytes_needed, @sizeOf(u64)) / @sizeOf(u64);
+
+    var buf = try allocator.alloc(u64, words_needed);
+
+    const operands: []const Operands = self.operands[0..self.opcodes.len];
+
+    @memcpy(std.mem.sliceAsBytes(buf[0..operands.len]), std.mem.sliceAsBytes(operands));
+    @memcpy(std.mem.sliceAsBytes(buf[operands.len..]).ptr, std.mem.sliceAsBytes(self.opcodes));
+
+    return buf;
 }
 
 pub fn init(allocator: std.mem.Allocator, instructions: std.MultiArrayList(Instruction), literal_data: []const u8) !Template {

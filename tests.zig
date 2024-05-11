@@ -452,7 +452,7 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
 
     try parser.append(source);
 
-    var template = try parser.finish(std.testing.allocator);
+    var template = try parser.finish(std.testing.allocator, true);
     defer template.deinit(std.testing.allocator);
 
     var temp = std.ArrayList(u8).init(std.testing.allocator);
@@ -569,7 +569,7 @@ fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !
 
     try parser.append(source);
 
-    var template = try parser.finish(std.testing.allocator);
+    var template = try parser.finish(std.testing.allocator, true);
     defer template.deinit(std.testing.allocator);
 
     var temp = std.ArrayList(u8).init(std.testing.allocator);
@@ -578,6 +578,37 @@ fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !
     const writer = temp.writer();
     try template.render(writer.any(), value, .{});
     try std.testing.expectEqualStrings(expected, temp.items);
+}
+
+test "init_static" {
+    const source_str = 
+        \\\\ hello: * //
+        \\\\ ~
+        ;
+
+    var parser: Parser = .{
+        .gpa = std.testing.allocator,
+        .include_callback = test_include_callback,
+        .resource_callback = test_resource_callback,
+    };
+    defer parser.deinit();
+
+    var source = try Source.init_buf(std.testing.allocator, "source", source_str);
+    defer source.deinit(std.testing.allocator);
+
+    try parser.append(source);
+
+    var template = try parser.finish(std.testing.allocator, true);
+    defer template.deinit(std.testing.allocator);
+
+    const instruction_data = try template.get_static_instruction_data(std.testing.allocator);
+    defer std.testing.allocator.free(instruction_data);
+
+    var template2 = Template.init_static(template.opcodes.len, instruction_data, template.literal_data);
+
+    try std.testing.expectEqualSlices(Template.Opcode, template.opcodes, template2.opcodes);
+    try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(template.operands[0..template.opcodes.len]), std.mem.sliceAsBytes(template2.operands[0..template2.opcodes.len]));
+    try std.testing.expectEqualStrings(template.literal_data, template2.literal_data);
 }
 
 const Template = @import("src/Template.zig");
