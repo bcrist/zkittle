@@ -410,22 +410,28 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
             .print = Enum_VTable(T, escape_fn, Context).print,
         }},
         .Pointer => |info| {
-            if (info.size == .Slice) {
-                if (info.child == u8) {
-                    return .{ .value = .{
-                        .data = @ptrCast(ptr),
-                        .as_number = String_VTable(escape_fn, Context).as_number,
-                        .print = String_VTable(escape_fn, Context).print,
-                    }};
-                } else {
-                    return .{ .collection = .{
-                        .data = @ptrCast(ptr.ptr),
-                        .size = ptr.len,
-                        .element = Array_VTable(info.child, escape_fn, Context).element,
-                    }};
-                }
-            } else {
-                return make_ref(@TypeOf(ptr.*.*), ptr.*, escape_fn, Context);
+            switch (info.size) {
+                .Slice => {
+                    if (info.child == u8) {
+                        return .{ .value = .{
+                            .data = @ptrCast(ptr),
+                            .as_number = String_VTable(escape_fn, Context).as_number,
+                            .print = String_VTable(escape_fn, Context).print,
+                        }};
+                    } else {
+                        return .{ .collection = .{
+                            .data = @ptrCast(ptr.ptr),
+                            .size = ptr.len,
+                            .element = Array_VTable(info.child, escape_fn, Context).element,
+                        }};
+                    }
+                },
+                .Many, .C => {
+                    return make_ref(@TypeOf(ptr.*[0]), &ptr.*[0], escape_fn, Context);
+                },
+                .One => {
+                    return make_ref(@TypeOf(ptr.*.*), ptr.*, escape_fn, Context);
+                },
             }
         },
         .Array => |info| {
@@ -444,7 +450,7 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
             }
         },
         .Optional => |info| .{ .collection = .{
-            .data = ptr,
+            .data = @ptrCast(ptr),
             .size = if (ptr.* == null) 0 else 1,
             .element = Optional_VTable(info.child, escape_fn, Context).element,
         }},
@@ -552,7 +558,7 @@ fn Enum_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime 
     return struct {
         pub fn as_number(self: *const anyopaque) usize {
             const ptr: *const T = @alignCast(@ptrCast(self));
-            return @intFromEnum(ptr.*);
+            return @intCast(@intFromEnum(ptr.*));
         }
 
         pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
@@ -682,7 +688,7 @@ fn Union_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime
                 .Fn => {
                     try Context(ptr.*, writer, escape);
                 },
-                .Pointer => {
+                .Pointer, .Array => {
                     try writer.print("{" ++ Context ++ "}", .{ ptr.* });
                 },
                 else => {
@@ -693,7 +699,6 @@ fn Union_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime
                             try print_ref(ref, writer, escape);
                         }
                     }
-                    unreachable;
                 },
             }
         }
@@ -738,7 +743,7 @@ fn Struct_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptim
                 .Fn => {
                     try Context(ptr.*, writer, escape);
                 },
-                .Pointer => {
+                .Pointer, .Array => {
                     try writer.print("{" ++ Context ++ "}", .{ ptr.* });
                 },
                 else => {
@@ -795,5 +800,3 @@ pub fn escape_html(str: []const u8, writer: std.io.AnyWriter) anyerror!void {
 const log = std.log.scoped(.zkittle);
 
 const std = @import("std");
-
-
