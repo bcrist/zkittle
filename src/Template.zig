@@ -56,7 +56,6 @@ pub const Literal_Ref = extern struct {
 pub const Ref = union (enum) {
     nil,
     collection: Collection,
-    structure: Structure,
     value: Value,
 };
 
@@ -66,15 +65,10 @@ pub const Collection = struct {
     element: *const fn(self: *const anyopaque, index: usize) Ref,
 };
 
-pub const Structure = struct {
-    data: *const anyopaque,
-    field: *const fn(self: *const anyopaque, name: []const u8) ?Ref,
-    print: *const fn(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void
-};
-
 pub const Value = struct {
     data: *const anyopaque,
     as_number: *const fn (self: *const anyopaque) usize,
+    field: *const fn(self: *const anyopaque, name: []const u8) Ref,
     print: *const fn(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void
 };
 
@@ -147,9 +141,6 @@ fn print_ref(ref: Ref, writer: std.io.AnyWriter, escape: bool) anyerror!void {
                 try print_ref(c.element(c.data, i), writer, escape);
             }
         },
-        .structure => |s| {
-            try s.print(s.data, writer, escape);
-        },
         .value => |v| {
             try v.print(v.data, writer, escape);
         },
@@ -160,7 +151,6 @@ fn ref_to_number(ref: Ref) usize {
     return switch (ref) {
         .nil => 0,
         .collection => |c| c.size,
-        .structure => 1,
         .value => |v| v.as_number(v.data),
     };
 }
@@ -169,6 +159,11 @@ fn number_ref(n: usize) Ref {
     const vtable = struct {
         pub fn as_number(self: *const anyopaque) usize {
             return @intFromPtr(self);
+        }
+        pub fn field(self: *const anyopaque, name: []const u8) Ref {
+            _ = self;
+            _ = name;
+            return .nil;
         }
         pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
             _ = escape;
@@ -179,6 +174,7 @@ fn number_ref(n: usize) Ref {
     return .{ .value = .{
         .data = @ptrFromInt(n),
         .as_number = vtable.as_number,
+        .field = vtable.field,
         .print = vtable.print,
     }};
 }
@@ -186,21 +182,12 @@ fn number_ref(n: usize) Ref {
 fn lookup_field(self: Template, ref: Ref, pc: usize) !Ref {
     switch (ref) {
         .nil => return .nil,
-        .structure => |s| {
-            if (s.field(s.data, self.literal(pc))) |r| {
-                return r;
-            } else {
-                log.debug("No field named {s} (pc={d})", .{ self.literal(pc), pc });
-                return .nil;
-            }
-        },
         .collection => {
             log.debug("Expected struct with field named {s}; found collection (pc={d})", .{ self.literal(pc), pc });
             return .nil;
         },
-        .value => {
-            log.debug("Expected struct with field named {s}; found value (pc={d})", .{ self.literal(pc), pc });
-            return .nil;
+        .value => |v| {
+            return v.field(v.data, self.literal(pc));
         },
     }
 }
@@ -216,15 +203,14 @@ fn lookup_index(ref: Ref, index: usize, pc: usize) !Ref {
                 return .nil;
             }
         },
-        .structure => {
+        .value => {
             if (index == 0) {
                 // This is needed for the "within" syntax
                 return ref;
             }
-            log.debug("Expected collection of size > {d}; found structure (pc={d})", .{ index, pc });
+            log.debug("Expected collection of size > {d}; found value (pc={d})", .{ index, pc });
             return .nil;
         },
-        .value => return ref, // this is needed in order for optionals to work with the "within" syntax
     }
 }
 
@@ -392,21 +378,25 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
         .Bool => .{ .value = .{
             .data = ptr,
             .as_number = Bool_VTable(Context).as_number,
+            .field = Bool_VTable(Context).field,
             .print = Bool_VTable(Context).print,
         }},
         .Int => .{ .value = .{
             .data = ptr,
             .as_number = Int_VTable(T, Context).as_number,
+            .field = Int_VTable(T, Context).field,
             .print = Int_VTable(T, Context).print,
         }},
         .Float => .{ .value = .{
             .data = ptr,
             .as_number = Float_VTable(T, Context).as_number,
+            .field = Float_VTable(T, Context).field,
             .print = Float_VTable(T, Context).print,
         }},
         .Enum => .{ .value = .{
             .data = ptr,
             .as_number = Enum_VTable(T, escape_fn, Context).as_number,
+            .field = Enum_VTable(T, escape_fn, Context).field,
             .print = Enum_VTable(T, escape_fn, Context).print,
         }},
         .Pointer => |info| {
@@ -416,6 +406,7 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
                         return .{ .value = .{
                             .data = @ptrCast(ptr),
                             .as_number = String_VTable(escape_fn, Context).as_number,
+                            .field = String_VTable(escape_fn, Context).field,
                             .print = String_VTable(escape_fn, Context).print,
                         }};
                     } else {
@@ -439,6 +430,7 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
                 return .{ .value = .{
                     .data = @ptrCast(ptr),
                     .as_number = Array_String_VTable(info.len, escape_fn, Context).as_number,
+                    .field = Array_String_VTable(info.len, escape_fn, Context).field,
                     .print = Array_String_VTable(info.len, escape_fn, Context).print,
                 }};
             } else {
@@ -456,8 +448,9 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
         }},
         .Union => |info| {
             if (info.tag_type == null) @compileError("Unions must be tagged");
-            return .{ .structure = .{
+            return .{ .value = .{
                 .data = ptr,
+                .as_number = Union_VTable(T, escape_fn, Context).as_number,
                 .field = Union_VTable(T, escape_fn, Context).field,
                 .print = Union_VTable(T, escape_fn, Context).print,
             }};
@@ -470,8 +463,9 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
                     .element = Struct_VTable(T, escape_fn, Context).tuple_element,
                 }};
             } else {
-                return .{ .structure = .{
+                return .{ .value = .{
                     .data = ptr,
+                    .as_number = Struct_VTable(T, escape_fn, Context).as_number,
                     .field = Struct_VTable(T, escape_fn, Context).field,
                     .print = Struct_VTable(T, escape_fn, Context).print,
                 }};
@@ -487,6 +481,12 @@ fn Bool_VTable(comptime Context: anytype) type {
         pub fn as_number(self: *const anyopaque) usize {
             const ptr: *const bool = @alignCast(@ptrCast(self));
             return @intFromBool(ptr.*);
+        }
+
+        pub fn field(self: *const anyopaque, name: []const u8) Ref {
+            _ = self;
+            _ = name;
+            return .nil;
         }
 
         pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
@@ -513,6 +513,12 @@ fn Int_VTable(comptime T: type, comptime Context: anytype) type {
             return @intCast(ptr.*);
         }
 
+        pub fn field(self: *const anyopaque, name: []const u8) Ref {
+            _ = self;
+            _ = name;
+            return .nil;
+        }
+
         pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
@@ -537,6 +543,12 @@ fn Float_VTable(comptime T: type, comptime Context: anytype) type {
             return @intFromFloat(ptr.*);
         }
 
+        pub fn field(self: *const anyopaque, name: []const u8) Ref {
+            _ = self;
+            _ = name;
+            return .nil;
+        }
+
         pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
@@ -559,6 +571,22 @@ fn Enum_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime 
         pub fn as_number(self: *const anyopaque) usize {
             const ptr: *const T = @alignCast(@ptrCast(self));
             return @intCast(@intFromEnum(ptr.*));
+        }
+
+        pub fn field(self: *const anyopaque, name: []const u8) Ref {
+            const ptr: *const T = @alignCast(@ptrCast(self));
+            const ordinal = @intFromEnum(ptr.*);
+            inline for (0.., @typeInfo(T).Enum.fields) |i, f| {
+                if (i == ordinal and std.mem.eql(u8, name, f.name)) {
+                    return .{ .value = .{
+                        .data = self,
+                        .as_number = as_number,
+                        .field = field,
+                        .print = print,
+                    }};
+                }
+            }
+            return .nil;
         }
 
         pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
@@ -593,6 +621,14 @@ fn String_VTable(comptime escape_fn: *const Escape_Fn, comptime Context: anytype
             return @intFromBool(ptr.*.len > 0);
         }
 
+        pub fn field(self: *const anyopaque, name: []const u8) Ref {
+            const ptr: *const []const u8 = @alignCast(@ptrCast(self));
+            if (std.mem.eql(u8, name, "len")) {
+                return number_ref(ptr.len);
+            }
+            return .nil;
+        }
+
         pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
             const ptr: *const []const u8 = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
@@ -619,6 +655,14 @@ fn Array_String_VTable(comptime length: usize, comptime escape_fn: *const Escape
         pub fn as_number(self: *const anyopaque) usize {
             _ = self;
             return @intFromBool(length > 0);
+        }
+
+        pub fn field(self: *const anyopaque, name: []const u8) Ref {
+            _ = self;
+            if (std.mem.eql(u8, name, "len")) {
+                return number_ref(length);
+            }
+            return .nil;
         }
 
         pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
@@ -659,7 +703,7 @@ fn Optional_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, compt
             if (ptr.*) |*value| {
                 return make_ref(@TypeOf(value.*), value, escape_fn, Context);
             } else {
-                return make_ref(void, undefined, escape_fn, Context);
+                return .nil;
             }
         }
     };
@@ -667,19 +711,27 @@ fn Optional_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, compt
 
 fn Union_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime Context: anytype) type {
     return struct {
-        pub fn field(self: *const anyopaque, name: []const u8) ?Ref {
+        pub fn as_number(self: *const anyopaque) usize {
+            _ = self;
+            // use .tag.# to get the tag's backing integer
+            return 1;
+        }
+
+        pub fn field(self: *const anyopaque, name: []const u8) Ref {
             const ptr: *const T = @alignCast(@ptrCast(self));
             const ordinal = @intFromEnum(ptr.*);
             inline for (0.., @typeInfo(T).Union.fields) |i, f| {
-                if (std.mem.eql(u8, name, f.name)) {
-                    if (i == ordinal) {
-                        return make_ref(f.type, &@field(ptr.*, f.name), escape_fn, Child_Context(Context, f.name));
-                    } else {
-                        return make_ref(void, undefined, escape_fn, struct {});
-                    }
+                if (i == ordinal and std.mem.eql(u8, name, f.name)) {
+                    return make_ref(f.type, &@field(ptr.*, f.name), escape_fn, Child_Context(Context, f.name));
                 }
             }
-            return null;
+
+            if (std.mem.eql(u8, name, "tag")) {
+                const Tag = std.meta.Tag(T);
+                return make_ref(Tag, &@as(Tag, ptr.*), escape_fn, Child_Context(Context, "tag"));
+            }
+
+            return .nil;
         }
 
         pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
@@ -722,7 +774,12 @@ fn Struct_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptim
             unreachable;
         }
 
-        pub fn field(self: *const anyopaque, name: []const u8) ?Ref {
+        pub fn as_number(self: *const anyopaque) usize {
+            _ = self;
+            return 1;
+        }
+
+        pub fn field(self: *const anyopaque, name: []const u8) Ref {
             const ptr: *const T = @alignCast(@ptrCast(self));
             inline for (@typeInfo(T).Struct.fields) |f| {
                 if (std.mem.eql(u8, name, f.name)) {
@@ -734,7 +791,7 @@ fn Struct_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptim
                     }
                 }
             }
-            return null;
+            return .nil;
         }
 
         pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
@@ -764,13 +821,13 @@ fn Struct_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptim
 }
 
 fn Child_Context(comptime Context: anytype, comptime field: []const u8) Child_Context_Type(Context, field) {
-    if (@typeInfo(@TypeOf(Context)) == .Struct and @hasDecl(Context, field)) {
+    if (@TypeOf(Context) == type and @typeInfo(Context) == .Struct and @hasDecl(Context, field)) {
         return @field(Context, field);
     }
     return struct {};
 }
 fn Child_Context_Type(comptime Context: anytype, comptime field: []const u8) type {
-    if (@typeInfo(@TypeOf(Context)) == .Struct and @hasDecl(Context, field)) {
+    if (@TypeOf(Context) == type and @typeInfo(Context) == .Struct and @hasDecl(Context, field)) {
         return @TypeOf(@field(Context, field));
     }
     return type;
