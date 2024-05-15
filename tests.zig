@@ -173,8 +173,7 @@ test "parsing" {
     try test_parse(
         \\\\ whatever
         ,
-        \\dupe_ref_0
-        \\field: "whatever"
+        \\push_field: "whatever"
         \\print_ref_escaped
         \\
     );
@@ -195,8 +194,7 @@ test "parsing" {
         ,
         \\print_literal: "test resource content"
         \\print_literal: "test include content"
-        \\dupe_ref_0
-        \\field: "included_field"
+        \\push_field: "included_field"
         \\print_ref_escaped
         \\
     );
@@ -204,8 +202,7 @@ test "parsing" {
     try test_parse(
         \\\\ @raw ax."something here".#.1.c
         ,
-        \\dupe_ref_0
-        \\field: "ax"
+        \\push_field: "ax"
         \\field: "something here"
         \\as_number
         \\number_to_ref
@@ -225,8 +222,7 @@ test "parsing" {
     try test_parse(
         \\\\ something? 1 ~
         ,
-        \\dupe_ref_0
-        \\field: "something"
+        \\push_field: "something"
         \\as_number
         \\pop_and_skip_if_zero: 3
         \\dupe_ref_0
@@ -240,14 +236,28 @@ test "parsing" {
         \\abc
         \\\\ ; whatever ~
         ,
+        \\push_field: "something"
+        \\as_number
+        \\pop_and_skip_if_zero: 2
+        \\print_literal: "abc\n"
+        \\skip: 2
+        \\push_field: "whatever"
+        \\print_ref_escaped
+        \\
+    );
+
+    try test_parse(
+        \\\\ *.something?
+        \\abc
+        \\\\ ; whatever ~
+        ,
         \\dupe_ref_0
         \\field: "something"
         \\as_number
         \\pop_and_skip_if_zero: 2
         \\print_literal: "abc\n"
-        \\skip: 3
-        \\dupe_ref_0
-        \\field: "whatever"
+        \\skip: 2
+        \\push_field: "whatever"
         \\print_ref_escaped
         \\
     );
@@ -271,21 +281,18 @@ test "parsing" {
         \\8
         \\
         ,
-        \\dupe_ref_0
-        \\field: "a"
+        \\push_field: "a"
         \\as_number
-        \\pop_and_skip_if_zero: 8
+        \\pop_and_skip_if_zero: 7
         \\print_literal: "1\n"
-        \\dupe_ref_0
-        \\field: "b"
+        \\push_field: "b"
         \\as_number
         \\pop_and_skip_if_zero: 1
         \\print_literal: "2\n"
         \\print_literal: "3\n"
-        \\skip: 9
+        \\skip: 8
         \\print_literal: "4\n"
-        \\dupe_ref_0
-        \\field: "c"
+        \\push_field: "c"
         \\as_number
         \\pop_and_skip_if_zero: 2
         \\print_literal: "5\n"
@@ -301,19 +308,17 @@ test "parsing" {
         \\abc
         \\\\ ; whatever ~
         ,
-        \\dupe_ref_0
-        \\field: "something"
+        \\push_field: "something"
         \\begin_loop
         \\skip_if_equal: 6
         \\dupe_ref_0_indexed
         \\print_literal: "abc\n"
         \\pop_ref
-        \\increment_and_retry_if_less: 4
+        \\increment_and_retry_if_less: 3
         \\end_loop
-        \\skip: 4
+        \\skip: 3
         \\end_loop
-        \\dupe_ref_0
-        \\field: "whatever"
+        \\push_field: "whatever"
         \\print_ref_escaped
         \\
     );
@@ -337,36 +342,33 @@ test "parsing" {
         \\8
         \\
         ,
-        \\dupe_ref_0
-        \\field: "a"
+        \\push_field: "a"
         \\begin_loop
-        \\skip_if_equal: 16
+        \\skip_if_equal: 15
         \\dupe_ref_0_indexed
         \\print_literal: "1\n"
-        \\dupe_ref_0
-        \\field: "b"
+        \\push_field: "b"
         \\begin_loop
         \\skip_if_equal: 4
         \\dupe_ref_0_indexed
         \\print_literal: "2\n"
         \\pop_ref
-        \\increment_and_retry_if_less: 10
+        \\increment_and_retry_if_less: 8
         \\end_loop
         \\print_literal: "3\n"
         \\pop_ref
-        \\increment_and_retry_if_less: 4
+        \\increment_and_retry_if_less: 3
         \\end_loop
-        \\skip: 15
+        \\skip: 14
         \\end_loop
         \\print_literal: "4\n"
-        \\dupe_ref_0
-        \\field: "c"
+        \\push_field: "c"
         \\begin_loop
         \\skip_if_equal: 6
         \\dupe_ref_0_indexed
         \\print_literal: "5\n"
         \\pop_ref
-        \\increment_and_retry_if_less: 26
+        \\increment_and_retry_if_less: 23
         \\end_loop
         \\skip: 2
         \\end_loop
@@ -379,8 +381,7 @@ test "parsing" {
     try test_parse(
         \\\\ something: ^# ^^something.0 ~
         ,
-        \\dupe_ref_0
-        \\field: "something"
+        \\push_field: "something"
         \\begin_loop
         \\skip_if_equal: 11
         \\dupe_ref_0_indexed
@@ -393,7 +394,7 @@ test "parsing" {
         \\index: 0
         \\print_ref_escaped
         \\pop_ref
-        \\increment_and_retry_if_less: 4
+        \\increment_and_retry_if_less: 3
         \\end_loop
         \\
     );
@@ -408,10 +409,26 @@ test "parsing" {
         \\\\$ asdfasdfasdf
         \\\\ gg // asdf
         ,
-        \\dupe_ref_0
-        \\field: "gg"
+        \\push_field: "gg"
         \\print_ref_escaped
         \\print_literal: " asdf"
+        \\
+    );
+
+    try test_parse(
+        \\\\ hello: * //
+        \\\\ ~
+        ,
+        \\push_field: "hello"
+        \\begin_loop
+        \\skip_if_equal: 6
+        \\dupe_ref_0_indexed
+        \\dupe_ref_0
+        \\print_ref_escaped
+        \\print_literal: "\n"
+        \\pop_ref
+        \\increment_and_retry_if_less: 3
+        \\end_loop
         \\
     );
 }
@@ -464,7 +481,7 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
         const operands = template.operands[i];
         try writer.writeAll(@tagName(opcode));
         switch (opcode) {
-            .print_literal, .field => {
+            .print_literal, .field, .push_field => {
                 const ref = operands.literal_string;
                 const span = template.literal_data[ref.offset..][0..ref.length];
                 try writer.print(": \"{}\"", .{ std.zig.fmtEscapes(span) });
@@ -508,25 +525,6 @@ test "render" {
         \\1asdfasdf
     );
 
-    try test_parse(
-        \\\\ hello: * //
-        \\\\ ~
-        //, .{ .hello = .{ "abc", "asdfasdf" } },
-        ,
-        \\dupe_ref_0
-        \\field: "hello"
-        \\begin_loop
-        \\skip_if_equal: 6
-        \\dupe_ref_0_indexed
-        \\dupe_ref_0
-        \\print_ref_escaped
-        \\print_literal: "\n"
-        \\pop_ref
-        \\increment_and_retry_if_less: 4
-        \\end_loop
-        \\
-    );
-
     try test_template(
         \\\\ hello: * //
         \\\\ ~
@@ -554,6 +552,14 @@ test "render" {
         \\
     );
 
+    try test_template(
+        \\\\ hello: outer //
+        \\\\ ~
+        , .{ .hello = .{ "abc", "asdfasdf" }, .outer = "asdf" },
+        \\asdf
+        \\asdf
+        \\
+    );
 }
 
 fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !void {

@@ -27,6 +27,7 @@ pub const Opcode = enum (u8) {
     print_ref_raw,
     print_ref_escaped,
     field, // literal_ref
+    push_field, // literal_ref
     index, // offset
     begin_loop,
     end_loop,
@@ -257,6 +258,22 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref) anyerror
                 if (ref_sp == 0) return error.InvalidTemplate;
                 log.debug("{}: field: ref={}", .{ pc, ref_sp - 1 });
                 refs[ref_sp - 1] = try self.lookup_field(refs[ref_sp - 1], pc);
+                pc += 1;
+            },
+            .push_field => {
+                if (ref_sp == 0) return error.InvalidTemplate;
+                log.debug("{}: push_field: ref={}", .{ pc, ref_sp });
+                var i = ref_sp;
+                while (i > 0) : (i -= 1) {
+                    const ref = try self.lookup_field(refs[i - 1], pc);
+                    if (ref != .nil) {
+                        refs[ref_sp] = ref;
+                        break;
+                    }
+                } else {
+                    refs[ref_sp] = .nil;
+                }
+                ref_sp += 1;
                 pc += 1;
             },
             .index => {

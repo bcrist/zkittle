@@ -115,24 +115,15 @@ fn parse_item(self: *Parser) !bool {
             return true;
         },
         else => {
-            if (try self.parse_expression()) return true;
             if (try self.parse_ref()) {
-                try self.add_basic_instruction(.print_ref_escaped);
+                if (!(try self.parse_condition()) and !(try self.parse_within())) {
+                    try self.add_basic_instruction(.print_ref_escaped);
+                }
                 return true;
             }
             return false;
         },
     }
-}
-
-fn parse_expression(self: *Parser) !bool {
-    if (try self.parse_ref()) {
-        if (!(try self.parse_condition()) and !(try self.parse_within())) {
-            try self.add_basic_instruction(.print_ref_escaped);
-        }
-        return true;
-    }
-    return false;
 }
 
 fn parse_condition(self: *Parser) !bool {
@@ -187,27 +178,48 @@ fn parse_within(self: *Parser) !bool {
 }
 
 fn parse_ref(self: *Parser) !bool {
-    if (self.try_token(.self)) |_| {
-        try self.add_dupe_ref_instruction(.{});
-        return true;
-    }
-
     switch (self.token_kinds[self.next_token]) {
         .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_index,
         .condition, .within, .otherwise, .end, .child => return false,
         .id, .number, .parent, .count, .self => {},
     }
 
-    var parent_count: usize = 0;
-    while (self.try_token(.parent)) |_| parent_count += 1;
-
-    try self.add_dupe_ref_instruction(.{ .parent_count = parent_count });
-    try self.parse_field_or_index_or_count();
-
+    try self.parse_ref_base();
     while (self.try_token(.child)) |_| {
         try self.parse_field_or_index_or_count();
     }
     return true;
+}
+
+fn parse_ref_base(self: *Parser) !void {
+    if (self.try_token(.self)) |_| {
+        try self.add_basic_instruction(.dupe_ref_0);
+        return;
+    }
+
+    var parent_count: usize = 0;
+    while (self.try_token(.parent)) |_| parent_count += 1;
+
+    if (parent_count == 0) {
+        if (self.try_token(.id)) |field_name| {
+            try self.add_literal_instruction(.push_field, field_name);
+            return;
+        }
+
+        try self.add_basic_instruction(.dupe_ref_0);
+        try self.parse_field_or_index_or_count();
+        return;
+    }
+
+    if (parent_count > self.ref_stack_depth) {
+        var buf: [128]u8 = undefined;
+        const msg = try std.fmt.bufPrint(&buf, "Not enough parent data contexts; only {} exist", .{ self.ref_stack_depth });
+        try self.include_stack.getLast().report_error(self.next_token - 1, msg);
+        parent_count = self.ref_stack_depth;
+    }
+
+    try self.add_offset_instruction(.dupe_ref, parent_count);
+    try self.parse_field_or_index_or_count();
 }
 
 fn parse_field_or_index_or_count(self: *Parser) !void {
@@ -250,25 +262,6 @@ fn require_token(self: *Parser, comptime kind: Token.Kind) ![]const u8 {
     return error.InvalidTemplate;
 }
 
-const Dupe_Ref_Options = struct {
-    parent_count: usize = 0,
-};
-fn add_dupe_ref_instruction(self: *Parser, options: Dupe_Ref_Options) !void {
-    var parent_count = options.parent_count;
-    if (parent_count > self.ref_stack_depth) {
-        var buf: [128]u8 = undefined;
-        const msg = try std.fmt.bufPrint(&buf, "Not enough parent data contexts; only {} exist", .{ self.ref_stack_depth });
-        try self.include_stack.getLast().report_error(self.next_token - 1, msg);
-        parent_count = self.ref_stack_depth;
-    }
-
-    if (parent_count == 0) {
-        try self.add_basic_instruction(.dupe_ref_0);
-    } else {
-        try self.add_offset_instruction(.dupe_ref, parent_count);
-    }
-}
-
 fn add_print_literal_instruction(self: *Parser, literal: []const u8) !void {
     if (literal.len == 0) return;
     try self.add_literal_instruction(.print_literal, literal);
@@ -282,6 +275,7 @@ fn add_basic_instruction(self: *Parser, op: Template.Opcode) !void {
     switch (op) {
         .print_literal, // literal_ref
         .field, // literal_ref
+        .push_field, // literal_ref
         .index, // offset
         .dupe_ref, // offset
         .pop_and_skip_if_zero, // offset
@@ -321,6 +315,7 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !vo
         .print_ref_escaped,
         .print_loop_index,
         .field, // literal_ref
+        .push_field, // literal_ref
         .as_number,
         .number_to_ref,
         .dupe_ref_0,
@@ -352,6 +347,9 @@ fn add_literal_instruction(self: *Parser, op: Template.Opcode, literal: []const 
         .field, // literal_ref
         => {},
 
+        .push_field, // literal_ref
+        => try self.check_and_increment_ref_stack(),
+
         .print_ref_raw,
         .print_ref_escaped,
         .print_loop_index,
@@ -381,6 +379,7 @@ fn finalize_skip_instruction(self: *Parser, instruction_address: usize, target_a
     switch (self.instructions.items(.op)[instruction_address]) {
         .print_literal, // literal_ref
         .field, // literal_ref
+        .push_field, // literal_ref
         .print_ref_raw,
         .print_ref_escaped,
         .print_loop_index,
