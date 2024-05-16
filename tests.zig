@@ -560,6 +560,12 @@ test "render" {
         \\asdf
         \\
     );
+
+    try test_template(
+        \\\\ @index
+        , {},
+        \\
+    );
 }
 
 fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !void {

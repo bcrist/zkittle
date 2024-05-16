@@ -249,9 +249,10 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref) anyerror
                 pc += 1;
             },
             .print_loop_index => {
-                if (variable_sp == 0) return error.InvalidTemplate;
-                log.debug("{}: print_loop_index: var={}", .{ pc, variable_sp - 1 });
-                try writer.print("{d}", .{ variables[variable_sp - 1] });
+                if (variable_sp > 0) {
+                    log.debug("{}: print_loop_index: var={}", .{ pc, variable_sp - 1 });
+                    try writer.print("{d}", .{ variables[variable_sp - 1] });
+                }
                 pc += 1;
             },
             .field => {

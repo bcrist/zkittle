@@ -33,8 +33,14 @@ The name is pronounced like "skittle," not "zee kittle".
     Tagged union fields can be accessed the same way as structs, but only the active field will resolve
     to actual data; inactive fields will resolve to void.
 
-    The special \\*// item represents the whole data context.
-    It's mostly useful when the data context is not a struct union, or collection.
+    The special \\*// item represents the whole data context (similar to the "this" or "self" pointer in
+    some programming languages).  It can be useful when the current data context is not a struct, union,
+    or collection.
+
+    Identifiers that aren't qualified by '^' can reference a field in the current context, or the first
+    parent context that has a non-nil value for the field.  This is useful because sometimes a template
+    is designed to be imported, but you don't know if it will be inside a "within" expression.  YOu can
+    explicitly search only the current context by using \\*.field// instead of \\field//.
 
     You can "push" a new data context with the ':' operator (a.k.a "within").
     This can be useful if you want to access multiple fields of a deeply nested struct.
@@ -52,8 +58,8 @@ The name is pronounced like "skittle," not "zee kittle".
     literal text easily.  Instead, the ~ character ends the region.
 
     When the data selected by a "within" expression is a collection, the sequence will be evaluated once
-    for each item in the collection.  You can access the current index with the \\@index// syntax.  When
-    not inside a "within" region, this will always resolve to 0.  You can access the entire collection
+    for each item in the collection.  You can print the current index with the \\@index// syntax.  When
+    not inside a "within" region, nothing will be output.  You can access the entire collection
     instead of an individual item with \\ ^* //.  You can access the "outer" data context with \\ ^^* //.
     (note this also works when the within expression isn't a collection)
     If you have nested "within" expressions, the '^' prefixes can be chained as needed.
