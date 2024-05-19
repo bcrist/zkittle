@@ -5,7 +5,6 @@
 		{ "include": "#comments" },
 		{ "include": "#block_comments" },
 		{ "include": "#block_helper" },
-		{ "include": "#inline_script" },
 		{ "include": "#html_tags" },
 		{ "include": "text.html.basic" }
 	],
@@ -353,7 +352,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.operator.zkittle",
-					"match": "\\?|:|;|~"
+					"match": "\\?|:|;|~|\\|"
 				}
 			]
 		},
@@ -361,7 +360,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.directive.zkittle",
-					"match": "(@resource|@include|@raw|@index)\\b"
+					"match": "(@resource|@include|@raw)\\b"
 				}
 			]
 		},
@@ -369,7 +368,7 @@
 			"patterns": [
 				{
 					"name": "variable.zkittle",
-					"match": "(\\^\\s*)*([a-zA-Z_0-9]+|\\#|\\*)(\\s*\\.\\s*([a-zA-Z_0-9]+|\\#|\\*))*"
+					"match": "(\\^\\s*)*([a-zA-Z_0-9]+|\\#|\\*|@index)(\\s*\\.\\s*([a-zA-Z_0-9]+|\\#|@index|@exists))*"
 				}
 			]
 		},

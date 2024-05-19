@@ -41,7 +41,7 @@ pub fn append(self: *Parser, source: Source) anyerror!void {
     self.next_token = 0;
 
     try self.parse_block();
-    while (self.try_token(.eof) == null) {
+    while (!self.try_token(.eof)) {
         try source.report_error(self.next_token, "Expected expression or directive");
         self.next_token += 1;
         try self.parse_block();
@@ -82,7 +82,7 @@ fn parse_item(self: *Parser) !bool {
         },
         .kw_resource => {
             self.next_token += 1;
-            const id = try self.require_token(.id);
+            const id = try self.require_id();
             if (self.resource_callback(id)) |literal| {
                 try self.add_print_literal_instruction(literal);
             } else |err| {
@@ -92,7 +92,7 @@ fn parse_item(self: *Parser) !bool {
         },
         .kw_include => {
             self.next_token += 1;
-            const id = try self.require_token(.id);
+            const id = try self.require_id();
             if (self.include_callback(id)) |source| {
                 try self.append(source);
             } else |err| {
@@ -102,20 +102,15 @@ fn parse_item(self: *Parser) !bool {
         },
         .kw_raw => {
             self.next_token += 1;
-            if (try self.parse_ref()) {
+            if (try self.parse_expression()) {
                 try self.add_basic_instruction(.print_ref_raw);
             } else {
                 try self.include_stack.getLast().report_error(self.next_token, "Expected value reference");
             }
             return true;
         },
-        .kw_index => {
-            self.next_token += 1;
-            try self.add_basic_instruction(.print_loop_index);
-            return true;
-        },
         else => {
-            if (try self.parse_ref()) {
+            if (try self.parse_expression()) {
                 if (!(try self.parse_condition()) and !(try self.parse_within())) {
                     try self.add_basic_instruction(.print_ref_escaped);
                 }
@@ -127,14 +122,14 @@ fn parse_item(self: *Parser) !bool {
 }
 
 fn parse_condition(self: *Parser) !bool {
-    if (self.try_token(.condition) == null) return false;
+    if (!self.try_token(.condition)) return false;
 
     try self.add_basic_instruction(.as_number);
     const conditional_jump_instruction = self.pc();
     try self.add_offset_instruction(.pop_and_skip_if_zero, 0); // to else block or end of block
     try self.parse_block();
 
-    if (self.try_token(.otherwise)) |_| {
+    if (self.try_token(.otherwise)) {
         const jump_instruction = self.pc();
         try self.add_offset_instruction(.skip, 0); // to end of block
         self.finalize_skip_instruction(conditional_jump_instruction, self.pc());
@@ -149,7 +144,7 @@ fn parse_condition(self: *Parser) !bool {
 }
 
 fn parse_within(self: *Parser) !bool {
-    if (self.try_token(.within) == null) return false;
+    if (!self.try_token(.within)) return false;
 
     try self.add_basic_instruction(.begin_loop);
     const skip_if_equal_instruction = self.pc();
@@ -163,7 +158,7 @@ fn parse_within(self: *Parser) !bool {
     self.finalize_skip_instruction(skip_if_equal_instruction, self.pc());
     try self.add_basic_instruction(.end_loop);
     
-    if (self.try_token(.otherwise)) |_| {
+    if (self.try_token(.otherwise)) {
         const skip_to_end_of_block_instruction = self.pc();
         try self.add_offset_instruction(.skip, 0); // to end of block
         self.finalize_skip_instruction(skip_if_equal_instruction, self.pc());
@@ -177,37 +172,71 @@ fn parse_within(self: *Parser) !bool {
     return true;
 }
 
+fn parse_expression(self: *Parser) !bool {
+    if (!try self.parse_ref()) return false;
+    
+    if (self.try_token(.fallback)) {
+        try self.add_basic_instruction(.dupe_ref_0);
+        try self.add_basic_instruction(.is_ref_nonnil);
+        try self.add_basic_instruction(.as_number);
+        const conditional_jump_instruction = self.pc();
+        try self.add_offset_instruction(.pop_and_skip_if_nonzero, 0); // to end of expression
+        try self.add_basic_instruction(.pop_ref);
+        if (!try self.parse_expression()) {
+            try self.add_basic_instruction(.push_nil);
+        }
+        self.finalize_skip_instruction(conditional_jump_instruction, self.pc());
+    }
+
+    return true;
+}
+
 fn parse_ref(self: *Parser) !bool {
     switch (self.token_kinds[self.next_token]) {
-        .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_index,
-        .condition, .within, .otherwise, .end, .child => return false,
-        .id, .number, .parent, .count, .self => {},
+        .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw,
+        .condition, .within, .otherwise, .end, .child, .fallback => return false,
+        .id, .number, .parent, .count, .self, .kw_index, .kw_exists => {},
     }
 
     try self.parse_ref_base();
-    while (self.try_token(.child)) |_| {
-        try self.parse_field_or_index_or_count();
+    while (self.try_token(.child)) {
+        if (try self.parse_field_or_index_or_count()) continue;
+
+        if (self.try_token(.kw_exists)) {
+            try self.add_basic_instruction(.is_ref_nonnil);
+            continue;
+        }
+
+        try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, '#', or '@exists'");
+        return error.InvalidTemplate;
     }
+
     return true;
 }
 
 fn parse_ref_base(self: *Parser) !void {
-    if (self.try_token(.self)) |_| {
+    if (self.try_token(.self)) {
         try self.add_basic_instruction(.dupe_ref_0);
+        return;
+    } else if (self.try_token(.kw_index)) {
+        try self.add_basic_instruction(.push_loop_index);
         return;
     }
 
     var parent_count: usize = 0;
-    while (self.try_token(.parent)) |_| parent_count += 1;
+    while (self.try_token(.parent)) parent_count += 1;
 
     if (parent_count == 0) {
-        if (self.try_token(.id)) |field_name| {
+        if (self.try_id()) |field_name| {
             try self.add_literal_instruction(.push_field, field_name);
             return;
         }
 
         try self.add_basic_instruction(.dupe_ref_0);
-        try self.parse_field_or_index_or_count();
+        if (!try self.parse_field_or_index_or_count()) {
+            try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, or '#'");
+            return error.InvalidTemplate;
+        }
         return;
     }
 
@@ -219,36 +248,33 @@ fn parse_ref_base(self: *Parser) !void {
     }
 
     try self.add_offset_instruction(.dupe_ref, parent_count);
-    try self.parse_field_or_index_or_count();
-}
-
-fn parse_field_or_index_or_count(self: *Parser) !void {
-    if (self.try_token(.id)) |field_name| {
-        try self.add_literal_instruction(.field, field_name);
-
-    } else if (self.try_token(.number)) |index_str| {
-        const index = try std.fmt.parseInt(usize, index_str, 10);
-        try self.instructions.append(self.gpa, .{
-            .op = .index,
-            .data = .{ .offset = index },
-        });
-    } else if (self.try_token(.count)) |_| {
-        try self.instructions.append(self.gpa, .{
-            .op = .as_number,
-            .data = .{ .none = {} },
-        });
-        try self.instructions.append(self.gpa, .{
-            .op = .number_to_ref,
-            .data = .{ .none = {} },
-        });
-    } else {
+    if (!try self.parse_field_or_index_or_count()) {
         try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, or '#'");
         return error.InvalidTemplate;
     }
 }
 
-fn try_token(self: *Parser, kind: Token.Kind) ?[]const u8 {
-    if (self.token_kinds[self.next_token] == kind) {
+fn parse_field_or_index_or_count(self: *Parser) !bool {
+    if (self.try_id()) |field_name| {
+        try self.add_literal_instruction(.field, field_name);
+
+    } else if (self.try_token(.number)) {
+        const index_str = self.token_spans[self.next_token - 1];
+        const index = try std.fmt.parseInt(usize, index_str, 10);
+        try self.add_offset_instruction(.index, index);
+
+    } else if (self.try_token(.count)) {
+        try self.add_basic_instruction(.as_number);
+        try self.add_basic_instruction(.number_to_ref);
+
+    } else {
+        return false;
+    }
+    return true;
+}
+
+fn try_id(self: *Parser) ?[]const u8 {
+    if (self.token_kinds[self.next_token] == .id) {
         const span = self.token_spans[self.next_token];
         self.next_token += 1;
         return span;
@@ -256,8 +282,22 @@ fn try_token(self: *Parser, kind: Token.Kind) ?[]const u8 {
     return null;
 }
 
-fn require_token(self: *Parser, comptime kind: Token.Kind) ![]const u8 {
-    if (self.try_token(kind)) |span| return span;
+fn try_token(self: *Parser, kind: Token.Kind) bool {
+    if (self.token_kinds[self.next_token] == kind) {
+        self.next_token += 1;
+        return true;
+    }
+    return false;
+}
+
+fn require_id(self: *Parser) ![]const u8 {
+    if (self.try_id()) |span| return span;
+    try self.include_stack.getLast().report_error(self.next_token, "Expected id");
+    return error.InvalidTemplate;
+}
+
+fn require_token(self: *Parser, comptime kind: Token.Kind) !void {
+    if (self.try_token(kind)) return;
     try self.include_stack.getLast().report_error(self.next_token, "Expected " ++ @tagName(kind));
     return error.InvalidTemplate;
 }
@@ -279,6 +319,7 @@ fn add_basic_instruction(self: *Parser, op: Template.Opcode) !void {
         .index, // offset
         .dupe_ref, // offset
         .pop_and_skip_if_zero, // offset
+        .pop_and_skip_if_nonzero, // offset
         .skip, // offset
         .skip_if_equal, // offset
         .increment_and_retry_if_less, // offset
@@ -294,12 +335,14 @@ fn add_basic_instruction(self: *Parser, op: Template.Opcode) !void {
         },
 
         .begin_loop,
-        .print_loop_index,
+        .is_ref_nonnil,
         => {},
 
         .dupe_ref_0,
         .dupe_ref_0_indexed,
         .number_to_ref,
+        .push_loop_index,
+        .push_nil,
         => try self.check_and_increment_ref_stack(),
     }
     try self.instructions.append(self.gpa, .{
@@ -313,7 +356,7 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !vo
         .print_literal, // literal_ref
         .print_ref_raw,
         .print_ref_escaped,
-        .print_loop_index,
+        .push_loop_index,
         .field, // literal_ref
         .push_field, // literal_ref
         .as_number,
@@ -323,10 +366,13 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !vo
         .end_loop,
         .dupe_ref_0_indexed,
         .pop_ref,
+        .is_ref_nonnil,
+        .push_nil,
         => unreachable,
 
         .index, // offset
         .pop_and_skip_if_zero, // offset
+        .pop_and_skip_if_nonzero, // offset
         .skip, // offset
         .skip_if_equal, // offset
         .increment_and_retry_if_less, // offset
@@ -352,13 +398,14 @@ fn add_literal_instruction(self: *Parser, op: Template.Opcode, literal: []const 
 
         .print_ref_raw,
         .print_ref_escaped,
-        .print_loop_index,
+        .push_loop_index,
         .as_number,
         .number_to_ref,
         .dupe_ref_0,
         .index, // offset
         .dupe_ref, // offset
         .pop_and_skip_if_zero, // offset
+        .pop_and_skip_if_nonzero, // offset
         .skip, // offset
         .begin_loop,
         .end_loop,
@@ -366,6 +413,8 @@ fn add_literal_instruction(self: *Parser, op: Template.Opcode, literal: []const 
         .dupe_ref_0_indexed,
         .pop_ref,
         .increment_and_retry_if_less, // offset
+        .is_ref_nonnil,
+        .push_nil,
         => unreachable,
     }
     const literal_ref = try self.intern_literal(literal);
@@ -382,7 +431,7 @@ fn finalize_skip_instruction(self: *Parser, instruction_address: usize, target_a
         .push_field, // literal_ref
         .print_ref_raw,
         .print_ref_escaped,
-        .print_loop_index,
+        .push_loop_index,
         .as_number,
         .number_to_ref,
         .dupe_ref_0,
@@ -393,10 +442,13 @@ fn finalize_skip_instruction(self: *Parser, instruction_address: usize, target_a
         .dupe_ref_0_indexed,
         .pop_ref,
         .increment_and_retry_if_less, // offset
+        .is_ref_nonnil,
+        .push_nil,
         => unreachable,
 
         .skip_if_equal, // offset
         .pop_and_skip_if_zero, // offset
+        .pop_and_skip_if_nonzero, // offset
         .skip, // offset
         => {},
     }

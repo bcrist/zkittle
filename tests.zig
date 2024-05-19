@@ -78,7 +78,7 @@ test "lexing" {
         \\
     );
     try test_lex(
-        \\\\ ^ a . b :;~?#%
+        \\\\ ^ a . b :;~?#%|
         ,
         \\parent:^
         \\id:a
@@ -90,6 +90,7 @@ test "lexing" {
         \\condition:?
         \\count:#
         \\invalid:%
+        \\fallback:|
         \\eof:
         \\
     );
@@ -97,7 +98,7 @@ test "lexing" {
         \\\\ @raw
         \\\\@rawwww @include
         \\\\ @resource @index
-        \\\\ @INDEX index
+        \\\\ @INDEX index @exists
         ,
         \\kw_raw:@raw
         \\invalid:@rawwww
@@ -106,6 +107,7 @@ test "lexing" {
         \\kw_index:@index
         \\invalid:@INDEX
         \\id:index
+        \\kw_exists:@exists
         \\eof:
         \\
     );
@@ -213,9 +215,11 @@ test "parsing" {
     );
 
     try test_parse(
-        \\\\ @index
+        \\\\ @index.@exists
         ,
-        \\print_loop_index
+        \\push_loop_index
+        \\is_ref_nonnil
+        \\print_ref_escaped
         \\
     );
 
@@ -431,6 +435,40 @@ test "parsing" {
         \\end_loop
         \\
     );
+
+    try test_parse(
+        \\\\ a | b
+        ,
+        \\push_field: "a"
+        \\dupe_ref_0
+        \\is_ref_nonnil
+        \\as_number
+        \\pop_and_skip_if_nonzero: 2
+        \\pop_ref
+        \\push_field: "b"
+        \\print_ref_escaped
+        \\
+    );
+
+    try test_parse(
+        \\\\ a | b | c
+        ,
+        \\push_field: "a"
+        \\dupe_ref_0
+        \\is_ref_nonnil
+        \\as_number
+        \\pop_and_skip_if_nonzero: 8
+        \\pop_ref
+        \\push_field: "b"
+        \\dupe_ref_0
+        \\is_ref_nonnil
+        \\as_number
+        \\pop_and_skip_if_nonzero: 2
+        \\pop_ref
+        \\push_field: "c"
+        \\print_ref_escaped
+        \\
+    );
 }
 
 var test_include: ?Source = null;
@@ -487,12 +525,14 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
                 try writer.print(": \"{}\"", .{ std.zig.fmtEscapes(span) });
             },
             .skip_if_equal, .increment_and_retry_if_less,
-            .index, .dupe_ref, .skip, .pop_and_skip_if_zero => {
+            .index, .dupe_ref, .skip,
+            .pop_and_skip_if_zero, .pop_and_skip_if_nonzero => {
                 try writer.print(": {}", .{ operands.offset });
             },
-            .print_ref_raw, .print_ref_escaped, .print_loop_index,
+            .print_ref_raw, .print_ref_escaped, .push_loop_index,
             .begin_loop, .end_loop, .dupe_ref_0_indexed, .pop_ref,
-            .as_number, .number_to_ref, .dupe_ref_0 => {},
+            .as_number, .number_to_ref, .dupe_ref_0, .is_ref_nonnil,
+            .push_nil => {},
 
         }
         try writer.writeByte('\n');
@@ -566,25 +606,47 @@ test "render" {
         , {},
         \\
     );
+
+    try test_template(
+        \\\\ @index.@exists
+        , {},
+        \\false
+    );
+
+    try test_template(
+        \\\\ @index | index
+        , .{ .index = 5 },
+        \\5
+    );
+
+    try test_template(
+        \\\\ @index | index1 | index2
+        , .{ .index1 = 5, .index2 = 10 },
+        \\5
+    );
 }
 
 fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !void {
+    try test_template_alloc(std.heap.page_allocator, source_str, value, expected);
+}
+
+fn test_template_alloc(allocator: std.mem.Allocator, source_str: []const u8, value: anytype, expected: []const u8) !void {
     var parser: Parser = .{
-        .gpa = std.testing.allocator,
+        .gpa = allocator,
         .include_callback = test_include_callback,
         .resource_callback = test_resource_callback,
     };
     defer parser.deinit();
 
-    var source = try Source.init_buf(std.testing.allocator, "source", source_str);
-    defer source.deinit(std.testing.allocator);
+    var source = try Source.init_buf(allocator, "source", source_str);
+    defer source.deinit(allocator);
 
     try parser.append(source);
 
-    var template = try parser.finish(std.testing.allocator, true);
-    defer template.deinit(std.testing.allocator);
+    var template = try parser.finish(allocator, true);
+    defer template.deinit(allocator);
 
-    var temp = std.ArrayList(u8).init(std.testing.allocator);
+    var temp = std.ArrayList(u8).init(allocator);
     defer temp.deinit();
 
     const writer = temp.writer();
@@ -621,6 +683,14 @@ test "init_static" {
     try std.testing.expectEqualSlices(Template.Opcode, template.opcodes, template2.opcodes);
     try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(template.operands[0..template.opcodes.len]), std.mem.sliceAsBytes(template2.operands[0..template2.opcodes.len]));
     try std.testing.expectEqualStrings(template.literal_data, template2.literal_data);
+}
+
+pub fn main() !void {
+    try test_template(
+        \\\\ @index | index
+        , .{ .index = 5 },
+        \\5
+    );
 }
 
 const Template = @import("src/Template.zig");

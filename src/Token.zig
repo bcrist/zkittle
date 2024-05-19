@@ -15,6 +15,7 @@ pub const Kind = enum (u8) {
     kw_include,
     kw_raw,
     kw_index,
+    kw_exists,
     condition,  // ?
     within,     // :
     otherwise,  // ;
@@ -23,6 +24,7 @@ pub const Kind = enum (u8) {
     child,      // .
     count,      // #
     self,       // *
+    fallback,   // |
 };
 
 
@@ -117,6 +119,10 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                     try tokens.append(allocator, .{ .kind = .self, .span = remaining[i .. i + 1] });
                     i += 1;
                 },
+                '|' => {
+                    try tokens.append(allocator, .{ .kind = .fallback, .span = remaining[i .. i + 1] });
+                    i += 1;
+                },
 
                 '@' => {
                     var j = i + 1;
@@ -133,6 +139,8 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                         try tokens.append(allocator, .{ .kind = .kw_raw, .span = token });
                     } else if (std.mem.eql(u8, token, "@index")) {
                         try tokens.append(allocator, .{ .kind = .kw_index, .span = token });
+                    } else if (std.mem.eql(u8, token, "@exists")) {
+                        try tokens.append(allocator, .{ .kind = .kw_exists, .span = token });
                     } else {
                         try tokens.append(allocator, .{ .kind = .invalid, .span = token });
                     }

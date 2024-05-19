@@ -26,20 +26,25 @@ The name is pronounced like "skittle," not "zee kittle".
 
     Individual elements of "collections" (arrays and slices) are accessed with '.': \\ some_array.0 //
     Optionals are treated as a collection of size 0 or 1.
-    Values of type void, null, and undefined are considered collections of size 0.
     The length of a collection can be printed with: \\ some_array.# //
     Accessing an out-of-bounds element is allowed; it becomes a void value (printing it is a no-op).
 
     Tagged union fields can be accessed the same way as structs, but only the active field will resolve
     to actual data; inactive fields will resolve to void.
 
-    The special \\*// item represents the whole data context (similar to the "this" or "self" pointer in
+    Values of type void are considered a special 'nil' value.  This includes accessing a struct field
+    that doesn't exist, an enum or union tag that isn't active (or doesn't exist), or a collection index
+    that's out of bounds, as well as data explicitly declared to have a type of `void` or
+    `@TypeOf(undefined)`.  All values have a \\value.@exists// pseudo-field which converts the value to
+    a bool, where nil becomes false, and anything else becomes true.
+
+    The special \\*// syntax represents the whole data context (similar to the "this" or "self" pointer in
     some programming languages).  It can be useful when the current data context is not a struct, union,
     or collection.
 
     Identifiers that aren't qualified by '^' can reference a field in the current context, or the first
     parent context that has a non-nil value for the field.  This is useful because sometimes a template
-    is designed to be imported, but you don't know if it will be inside a "within" expression.  YOu can
+    is designed to be imported, but you don't know if it will be inside a "within" expression.  You can
     explicitly search only the current context by using \\*.field// instead of \\field//.
 
     You can "push" a new data context with the ':' operator (a.k.a "within").
@@ -73,6 +78,9 @@ The name is pronounced like "skittle," not "zee kittle".
     Both ':' and '?' regions may contain a ';' before the '~' to create an "otherwise" region.
     This region will only be evaluated if the first region is not evaluated. e.g.
     \\ has_full_name ? full_name ; first_name last_name ~ //
+
+    \\x | y// is mostly equivalent to \\x.@exists? x ; y ~// except that the former can be used as an
+    expression, while the latter always just prints x or y.
 
     By default all strings will be printed with an HTML escape function.
     This can be overridden or disabled in code when generating other types of documents.

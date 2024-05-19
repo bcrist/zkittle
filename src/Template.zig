@@ -38,9 +38,12 @@ pub const Opcode = enum (u8) {
     dupe_ref_0,
     skip_if_equal, // offset
     pop_and_skip_if_zero, // offset
+    pop_and_skip_if_nonzero, // offset
     dupe_ref_0_indexed,
     increment_and_retry_if_less, // offset
-    print_loop_index,
+    push_loop_index,
+    is_ref_nonnil,
+    push_nil,
 };
 
 pub const Operands = extern union {
@@ -58,6 +61,7 @@ pub const Ref = union (enum) {
     nil,
     collection: Collection,
     value: Value,
+    inline_value: Inline_Value,
 };
 
 pub const Collection = struct {
@@ -71,6 +75,12 @@ pub const Value = struct {
     as_number: *const fn (self: *const anyopaque) usize,
     field: *const fn(self: *const anyopaque, name: []const u8) Ref,
     print: *const fn(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void
+};
+
+pub const Inline_Value = struct {
+    data: usize,
+    field: *const fn(self: usize, name: []const u8) Ref,
+    print: *const fn(self: usize, writer: std.io.AnyWriter, escape: bool) anyerror!void
 };
 
 opcodes: []const Opcode,
@@ -145,6 +155,9 @@ fn print_ref(ref: Ref, writer: std.io.AnyWriter, escape: bool) anyerror!void {
         .value => |v| {
             try v.print(v.data, writer, escape);
         },
+        .inline_value => |v| {
+            try v.print(v.data, writer, escape);
+        },
     }
 }
 
@@ -153,28 +166,45 @@ fn ref_to_number(ref: Ref) usize {
         .nil => 0,
         .collection => |c| c.size,
         .value => |v| v.as_number(v.data),
+        .inline_value => |v| v.data,
     };
 }
 
 fn number_ref(n: usize) Ref {
     const vtable = struct {
-        pub fn as_number(self: *const anyopaque) usize {
-            return @intFromPtr(self);
-        }
-        pub fn field(self: *const anyopaque, name: []const u8) Ref {
+        pub fn field(self: usize, name: []const u8) Ref {
             _ = self;
             _ = name;
             return .nil;
         }
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+        pub fn print(self: usize, writer: std.io.AnyWriter, escape: bool) anyerror!void {
             _ = escape;
-            try writer.print("{d}", .{ as_number(self) });
+            try writer.print("{d}", .{ self });
         }
     };
 
-    return .{ .value = .{
-        .data = @ptrFromInt(n),
-        .as_number = vtable.as_number,
+    return .{ .inline_value = .{
+        .data = n,
+        .field = vtable.field,
+        .print = vtable.print,
+    }};
+}
+
+fn bool_ref(b: bool) Ref {
+    const vtable = struct {
+        pub fn field(self: usize, name: []const u8) Ref {
+            _ = self;
+            _ = name;
+            return .nil;
+        }
+        pub fn print(self: usize, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+            _ = escape;
+            try writer.print("{}", .{ self != 0 });
+        }
+    };
+
+    return .{ .inline_value = .{
+        .data = @intFromBool(b),
         .field = vtable.field,
         .print = vtable.print,
     }};
@@ -188,6 +218,9 @@ fn lookup_field(self: Template, ref: Ref, pc: usize) !Ref {
             return .nil;
         },
         .value => |v| {
+            return v.field(v.data, self.literal(pc));
+        },
+        .inline_value => |v| {
             return v.field(v.data, self.literal(pc));
         },
     }
@@ -204,7 +237,7 @@ fn lookup_index(ref: Ref, index: usize, pc: usize) !Ref {
                 return .nil;
             }
         },
-        .value => {
+        .value, .inline_value => {
             if (index == 0) {
                 // This is needed for the "within" syntax
                 return ref;
@@ -248,11 +281,15 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref) anyerror
                 try print_ref(refs[ref_sp], writer, true);
                 pc += 1;
             },
-            .print_loop_index => {
+            .push_loop_index => {
                 if (variable_sp > 0) {
-                    log.debug("{}: print_loop_index: var={}", .{ pc, variable_sp - 1 });
-                    try writer.print("{d}", .{ variables[variable_sp - 1] });
+                    log.debug("{}: push_loop_index: ref={}, var={}", .{ pc, ref_sp, variable_sp - 1 });
+                    refs[ref_sp] = number_ref(variables[variable_sp - 1]);
+                } else {
+                    log.debug("{}: push_loop_index: ref={}, (nil)", .{ pc, ref_sp });
+                    refs[ref_sp] = .nil;
                 }
+                ref_sp += 1;
                 pc += 1;
             },
             .field => {
@@ -287,8 +324,9 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref) anyerror
             .as_number => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
-                log.debug("{}: as_number: ref={} var={}", .{ pc, ref_sp, variable_sp });
-                variables[variable_sp] = ref_to_number(refs[ref_sp]);
+                const number = ref_to_number(refs[ref_sp]);
+                log.debug("{}: as_number: ref={} var={} num={}", .{ pc, ref_sp, variable_sp, number });
+                variables[variable_sp] = number;
                 variable_sp += 1;
                 pc += 1;
             },
@@ -322,6 +360,18 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref) anyerror
                 const offset = self.operands[pc].offset;
                 log.debug("{}: pop_and_skip_if_zero: var={} val={} offset={}", .{ pc, variable_sp, value, offset });
                 if (value == 0) {
+                    pc += offset + 1;
+                } else {
+                    pc += 1;
+                }
+            },
+            .pop_and_skip_if_nonzero => {
+                if (variable_sp == 0) return error.InvalidTemplate;
+                variable_sp -= 1;
+                const value = variables[variable_sp];
+                const offset = self.operands[pc].offset;
+                log.debug("{}: pop_and_skip_if_zero: var={} val={} offset={}", .{ pc, variable_sp, value, offset });
+                if (value != 0) {
                     pc += offset + 1;
                 } else {
                     pc += 1;
@@ -386,13 +436,29 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref) anyerror
                     pc += 1;
                 }
             },
+            .is_ref_nonnil => {
+                if (ref_sp == 0) return error.InvalidTemplate;
+                log.debug("{}: is_ref_nonnil: ref={}", .{ pc, ref_sp - 1 });
+                refs[ref_sp - 1] = bool_ref(refs[ref_sp - 1] != .nil);
+                pc += 1;
+            },
+            .push_nil => {
+                refs[ref_sp] = .nil;
+                ref_sp += 1;
+                pc += 1;
+            },
         }
     }
 }
 
 pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Escape_Fn, comptime Context: anytype) Ref {
     return switch (@typeInfo(T)) {
-        .Void, .Null, .Undefined => .nil,
+        .Void, .Undefined => .nil,
+        .Null => .{ .collection = .{
+            .data = undefined,
+            .size = 0,
+            .element = Null_VTable.element,
+        }},
         .Bool => .{ .value = .{
             .data = ptr,
             .as_number = Bool_VTable(Context).as_number,
@@ -405,6 +471,7 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
             .field = Int_VTable(T, Context).field,
             .print = Int_VTable(T, Context).print,
         }},
+        .ComptimeInt => number_ref(@as(usize, ptr.*)),
         .Float => .{ .value = .{
             .data = ptr,
             .as_number = Float_VTable(T, Context).as_number,
@@ -493,6 +560,14 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
         else => @compileError("Unsupported type: " ++ @typeName(T)),
     };
 }
+
+pub const Null_VTable = struct {
+    pub fn element(self: *const anyopaque, index: usize) Ref {
+        _ = self;
+        _ = index;
+        return .nil;
+    }
+};
 
 fn Bool_VTable(comptime Context: anytype) type {
     return struct {
