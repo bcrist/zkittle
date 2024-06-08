@@ -9,8 +9,8 @@
     },
     .dependencies = .{
         .@"Zig-ConsoleHelper" = .{
-            .url = "git+https://github.com/bcrist/Zig-ConsoleHelper#41e35796153f056679d3df3d1aaee34f56541e51",
-            .hash = "1220e40224119b919f4fa66b9a016f75b4f75c4fdd890b56cfd7c7d5de860f752c59",
+            .url = "git+https://github.com/bcrist/Zig-ConsoleHelper#45b0111f5ceded39936944ed358a4750745a7d18",
+            .hash = "12200f0dc4a77eb8f8818ec53a8482b71c0419ed6a726353d61d82e015715c62280c",
         },
     },
 }

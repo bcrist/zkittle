@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const module = b.addModule("zkittle", .{
-        .root_source_file = .{ .path = "src/Template.zig" },
+        .root_source_file = b.path("src/Template.zig"),
     });
     module.addImport("console", b.dependency("Zig-ConsoleHelper", .{}).module("console"));
 
@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const tests = b.addTest(.{
-        .root_source_file = .{ .path = "tests.zig"},
+        .root_source_file = b.path("tests.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
 
     const test_exe = b.addExecutable(.{
         .name = "testexe",
-        .root_source_file = .{ .path = "tests.zig"},
+        .root_source_file = b.path("tests.zig"),
         .target = target,
         .optimize = optimize,
     });
