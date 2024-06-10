@@ -17,15 +17,16 @@ pub const Kind = enum (u8) {
     kw_index,
     kw_exists,
     kw_url,
-    condition,  // ?
-    within,     // :
-    otherwise,  // ;
-    end,        // ~
-    parent,     // ^
-    child,      // .
-    count,      // #
-    self,       // *
-    fallback,   // |
+    condition,   // ?
+    within,      // :
+    otherwise,   // ;
+    end,         // ~
+    parent,      // ^
+    child,       // .
+    count,       // #
+    self,        // *
+    fallback,    // |
+    alternative, // /
 };
 
 
@@ -83,7 +84,7 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                         remaining = remaining[i + 2 ..];
                         break;
                     } else {
-                        try tokens.append(allocator, .{ .kind = .invalid, .span = remaining[i .. i + 1] });
+                        try tokens.append(allocator, .{ .kind = .alternative, .span = remaining[i .. i + 1] });
                         i += 1;
                     }
                 },
@@ -151,6 +152,7 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                 },
 
                 '$' => {
+                    // comment
                     var j = i + 1;
                     while (j < remaining.len) : (j += 1) switch (remaining[j]) {
                         '/' => if (j + 1 < remaining.len and remaining[j + 1] == '/') {

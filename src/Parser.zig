@@ -195,6 +195,16 @@ fn parse_expression(self: *Parser) !bool {
             try self.add_basic_instruction(.push_nil);
         }
         self.finalize_skip_instruction(conditional_jump_instruction, self.pc());
+    } else if (self.try_token(.alternative)) {
+        try self.add_basic_instruction(.dupe_ref_0);
+        try self.add_basic_instruction(.as_number);
+        const conditional_jump_instruction = self.pc();
+        try self.add_offset_instruction(.pop_and_skip_if_nonzero, 0); // to end of expression
+        try self.add_basic_instruction(.pop_ref);
+        if (!try self.parse_expression()) {
+            try self.add_basic_instruction(.push_nil);
+        }
+        self.finalize_skip_instruction(conditional_jump_instruction, self.pc());
     }
 
     return true;
@@ -203,7 +213,7 @@ fn parse_expression(self: *Parser) !bool {
 fn parse_ref(self: *Parser) !bool {
     switch (self.token_kinds[self.next_token]) {
         .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_url,
-        .condition, .within, .otherwise, .end, .child, .fallback => return false,
+        .condition, .within, .otherwise, .end, .child, .fallback, .alternative => return false,
         .id, .number, .parent, .count, .self, .kw_index, .kw_exists => {},
     }
 

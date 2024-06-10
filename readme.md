@@ -79,8 +79,9 @@ The name is pronounced like "skittle," not "zee kittle".
     This region will only be evaluated if the first region is not evaluated. e.g.
     \\ has_full_name ? full_name ; first_name last_name ~ //
 
-    \\x | y// is mostly equivalent to \\x.@exists? x ; y ~// except that the former can be used as an
-    expression, while the latter always just prints x or y.
+    \\x / y// is mostly equivalent to \\x? x ; y ~// except that the former can be used as an
+    expression, while the latter always just prints x or y.  Similarly \\x | y// is corresponds to
+    \\x.@exists? x ; y ~// in the same way.
 
     By default all strings will be printed with an HTML escape function.
     This can be overridden or disabled in code when generating other types of documents.

@@ -352,7 +352,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.operator.zkittle",
-					"match": "\\?|:|;|~|\\|"
+					"match": "\\?|:|;|~|\\||/"
 				}
 			]
 		},

@@ -78,7 +78,7 @@ test "lexing" {
         \\
     );
     try test_lex(
-        \\\\ ^ a . b :;~?#%|
+        \\\\ ^ a . b :;~?#%|/
         ,
         \\parent:^
         \\id:a
@@ -91,6 +91,7 @@ test "lexing" {
         \\count:#
         \\invalid:%
         \\fallback:|
+        \\alternative:/
         \\eof:
         \\
     );
@@ -484,6 +485,39 @@ test "parsing" {
         \\print_ref_escaped
         \\
     );
+
+    
+    try test_parse(
+        \\\\ a / b
+        ,
+        \\push_field: "a"
+        \\dupe_ref_0
+        \\as_number
+        \\pop_and_skip_if_nonzero: 2
+        \\pop_ref
+        \\push_field: "b"
+        \\print_ref_escaped
+        \\
+    );
+
+    try test_parse(
+        \\\\ a / b | c
+        ,
+        \\push_field: "a"
+        \\dupe_ref_0
+        \\as_number
+        \\pop_and_skip_if_nonzero: 8
+        \\pop_ref
+        \\push_field: "b"
+        \\dupe_ref_0
+        \\is_ref_nonnil
+        \\as_number
+        \\pop_and_skip_if_nonzero: 2
+        \\pop_ref
+        \\push_field: "c"
+        \\print_ref_escaped
+        \\
+    );
 }
 
 var test_include: ?Source = null;
@@ -632,6 +666,18 @@ test "render" {
         \\\\ @index | index
         , .{ .index = 5 },
         \\5
+    );
+
+    try test_template(
+        \\\\ a / b
+        , .{ .a = "", .b = "XYZ" },
+        \\XYZ
+    );
+
+    try test_template(
+        \\\\ a / b / c
+        , .{ .a = null, .b = "XYZ", .c = 123 },
+        \\XYZ
     );
 
     try test_template(
