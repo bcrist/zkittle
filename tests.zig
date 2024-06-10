@@ -96,11 +96,13 @@ test "lexing" {
     );
     try test_lex(
         \\\\ @raw
+        \\\\@url
         \\\\@rawwww @include
         \\\\ @resource @index
         \\\\ @INDEX index @exists
         ,
         \\kw_raw:@raw
+        \\kw_url:@url
         \\invalid:@rawwww
         \\kw_include:@include
         \\kw_resource:@resource
@@ -211,6 +213,19 @@ test "parsing" {
         \\index: 1
         \\field: "c"
         \\print_ref_raw
+        \\
+    );
+
+    try test_parse(
+        \\\\ @url ax."something here".#.1.c
+        ,
+        \\push_field: "ax"
+        \\field: "something here"
+        \\as_number
+        \\number_to_ref
+        \\index: 1
+        \\field: "c"
+        \\print_ref_url
         \\
     );
 
@@ -529,7 +544,7 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
             .pop_and_skip_if_zero, .pop_and_skip_if_nonzero => {
                 try writer.print(": {}", .{ operands.offset });
             },
-            .print_ref_raw, .print_ref_escaped, .push_loop_index,
+            .print_ref_raw, .print_ref_escaped, .print_ref_url, .push_loop_index,
             .begin_loop, .end_loop, .dupe_ref_0_indexed, .pop_ref,
             .as_number, .number_to_ref, .dupe_ref_0, .is_ref_nonnil,
             .push_nil => {},
@@ -623,6 +638,24 @@ test "render" {
         \\\\ @index | index1 | index2
         , .{ .index1 = 5, .index2 = 10 },
         \\5
+    );
+
+    try test_template(
+        \\\\ html
+        , .{ .html = "<html></html>" },
+        \\&lt;html&gt;&lt;/html&gt;
+    );
+
+    try test_template(
+        \\\\ @raw html
+        , .{ .html = "<html></html>" },
+        \\<html></html>
+    );
+
+    try test_template(
+        \\\\ @url html
+        , .{ .html = "<html></html>" },
+        \\%3Chtml%3E%3C%2Fhtml%3E
     );
 }
 

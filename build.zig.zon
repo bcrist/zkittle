@@ -1,6 +1,6 @@
 .{
-    .name = "Zkittle",
-    .version = "0.0.3",
+    .name = "zkittle",
+    .version = "0.0.4",
     .minimum_zig_version = "0.12.0",
     .paths = .{
         "src",
@@ -8,9 +8,13 @@
         "build.zig.zon",
     },
     .dependencies = .{
-        .@"Zig-ConsoleHelper" = .{
+        .console_helper = .{
             .url = "git+https://github.com/bcrist/Zig-ConsoleHelper#45b0111f5ceded39936944ed358a4750745a7d18",
             .hash = "12200f0dc4a77eb8f8818ec53a8482b71c0419ed6a726353d61d82e015715c62280c",
+        },
+        .percent_encoding = .{
+            .url = "git+https://github.com/bcrist/zig-percent-encoding#058c4566fa9f1a261a4a3e2f93548445b38bd0dd",
+            .hash = "12204e3e77952273a67c11f2cd0de36996aa89cd677c8af1075fae3e44d0e8d010f0",
         },
     },
 }

@@ -109,6 +109,15 @@ fn parse_item(self: *Parser) !bool {
             }
             return true;
         },
+        .kw_url => {
+            self.next_token += 1;
+            if (try self.parse_expression()) {
+                try self.add_basic_instruction(.print_ref_url);
+            } else {
+                try self.include_stack.getLast().report_error(self.next_token, "Expected value reference");
+            }
+            return true;
+        },
         else => {
             if (try self.parse_expression()) {
                 if (!(try self.parse_condition()) and !(try self.parse_within())) {
@@ -193,7 +202,7 @@ fn parse_expression(self: *Parser) !bool {
 
 fn parse_ref(self: *Parser) !bool {
     switch (self.token_kinds[self.next_token]) {
-        .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw,
+        .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_url,
         .condition, .within, .otherwise, .end, .child, .fallback => return false,
         .id, .number, .parent, .count, .self, .kw_index, .kw_exists => {},
     }
@@ -327,6 +336,7 @@ fn add_basic_instruction(self: *Parser, op: Template.Opcode) !void {
 
         .print_ref_raw,
         .print_ref_escaped,
+        .print_ref_url,
         .as_number,
         .end_loop,
         .pop_ref,
@@ -356,6 +366,7 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !vo
         .print_literal, // literal_ref
         .print_ref_raw,
         .print_ref_escaped,
+        .print_ref_url,
         .push_loop_index,
         .field, // literal_ref
         .push_field, // literal_ref
@@ -398,6 +409,7 @@ fn add_literal_instruction(self: *Parser, op: Template.Opcode, literal: []const 
 
         .print_ref_raw,
         .print_ref_escaped,
+        .print_ref_url,
         .push_loop_index,
         .as_number,
         .number_to_ref,
@@ -431,6 +443,7 @@ fn finalize_skip_instruction(self: *Parser, instruction_address: usize, target_a
         .push_field, // literal_ref
         .print_ref_raw,
         .print_ref_escaped,
+        .print_ref_url,
         .push_loop_index,
         .as_number,
         .number_to_ref,

@@ -16,6 +16,7 @@ pub const Kind = enum (u8) {
     kw_raw,
     kw_index,
     kw_exists,
+    kw_url,
     condition,  // ?
     within,     // :
     otherwise,  // ;
@@ -141,6 +142,8 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                         try tokens.append(allocator, .{ .kind = .kw_index, .span = token });
                     } else if (std.mem.eql(u8, token, "@exists")) {
                         try tokens.append(allocator, .{ .kind = .kw_exists, .span = token });
+                    } else if (std.mem.eql(u8, token, "@url")) {
+                        try tokens.append(allocator, .{ .kind = .kw_url, .span = token });
                     } else {
                         try tokens.append(allocator, .{ .kind = .invalid, .span = token });
                     }

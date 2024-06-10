@@ -6,12 +6,12 @@ const Template = @This();
 
 pub const Render_Options = struct {
     Context: type = struct {},
-    escape_fn: *const Escape_Fn = escape_html,
+    escape_fn: *const escape.Fn = escape.html,
+    url_fn: *const escape.Fn = escape.url,
 };
-pub const Escape_Fn = fn(str: []const u8, writer: std.io.AnyWriter) anyerror!void;
 
 pub fn render(self: Template, writer: std.io.AnyWriter, obj: anytype, comptime options: Render_Options) anyerror!void {
-    try self.execute(writer, make_ref(@TypeOf(obj), &obj, options.escape_fn, options.Context));
+    try self.execute(writer, make_ref(@TypeOf(obj), &obj, options.Context), options.escape_fn, options.url_fn);
 }
 
 pub const max_stack_size = 31;
@@ -26,6 +26,7 @@ pub const Opcode = enum (u8) {
     as_number,
     print_ref_raw,
     print_ref_escaped,
+    print_ref_url,
     field, // literal_ref
     push_field, // literal_ref
     index, // offset
@@ -74,13 +75,13 @@ pub const Value = struct {
     data: *const anyopaque,
     as_number: *const fn (self: *const anyopaque) usize,
     field: *const fn(self: *const anyopaque, name: []const u8) Ref,
-    print: *const fn(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void
+    print: *const fn(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void
 };
 
 pub const Inline_Value = struct {
     data: usize,
     field: *const fn(self: usize, name: []const u8) Ref,
-    print: *const fn(self: usize, writer: std.io.AnyWriter, escape: bool) anyerror!void
+    print: *const fn(self: usize, writer: std.io.AnyWriter) anyerror!void
 };
 
 opcodes: []const Opcode,
@@ -144,19 +145,30 @@ fn literal(self: Template, pc: usize) []const u8 {
     return self.literal_data[ref.offset..][0..ref.length];
 }
 
-fn print_ref(ref: Ref, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+fn print_ref(ref: Ref, writer: std.io.AnyWriter, escape_fn: ?*const escape.Fn) anyerror!void {
     switch (ref) {
         .nil => {},
-        .collection => |c| {
+        .collection => |c| if (escape_fn) |func| {
+            const w = escape.writer(writer, func);
             for (0..c.size) |i| {
-                try print_ref(c.element(c.data, i), writer, escape);
+                try print_ref(c.element(c.data, i), w.any(), null);
+            }
+        } else {
+            for (0..c.size) |i| {
+                try print_ref(c.element(c.data, i), writer, null);
             }
         },
-        .value => |v| {
-            try v.print(v.data, writer, escape);
+        .value => |v| if (escape_fn) |func| {
+            const w = escape.writer(writer, func);
+            try v.print(v.data, w.any());
+        } else {
+            try v.print(v.data, writer);
         },
-        .inline_value => |v| {
-            try v.print(v.data, writer, escape);
+        .inline_value => |v| if (escape_fn) |func| {
+            const w = escape.writer(writer, func);
+            try v.print(v.data, w.any());
+        } else {
+            try v.print(v.data, writer);
         },
     }
 }
@@ -177,8 +189,7 @@ fn number_ref(n: usize) Ref {
             _ = name;
             return .nil;
         }
-        pub fn print(self: usize, writer: std.io.AnyWriter, escape: bool) anyerror!void {
-            _ = escape;
+        pub fn print(self: usize, writer: std.io.AnyWriter) anyerror!void {
             try writer.print("{d}", .{ self });
         }
     };
@@ -197,8 +208,7 @@ fn bool_ref(b: bool) Ref {
             _ = name;
             return .nil;
         }
-        pub fn print(self: usize, writer: std.io.AnyWriter, escape: bool) anyerror!void {
-            _ = escape;
+        pub fn print(self: usize, writer: std.io.AnyWriter) anyerror!void {
             try writer.print("{}", .{ self != 0 });
         }
     };
@@ -248,7 +258,7 @@ fn lookup_index(ref: Ref, index: usize, pc: usize) !Ref {
     }
 }
 
-pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref) anyerror!void {
+pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_fn: *const escape.Fn, url_fn: *const escape.Fn) anyerror!void {
     const opcodes = self.opcodes;
 
     var variables: [max_stack_size]usize = .{ 0 } ** max_stack_size;
@@ -271,14 +281,21 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref) anyerror
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
                 log.debug("{}: print_ref_raw: ref={}", .{ pc, ref_sp });
-                try print_ref(refs[ref_sp], writer, false);
+                try print_ref(refs[ref_sp], writer, null);
                 pc += 1;
             },
             .print_ref_escaped => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
                 log.debug("{}: print_ref_escaped: ref={}", .{ pc, ref_sp });
-                try print_ref(refs[ref_sp], writer, true);
+                try print_ref(refs[ref_sp], writer, escape_fn);
+                pc += 1;
+            },
+            .print_ref_url => {
+                if (ref_sp == 0) return error.InvalidTemplate;
+                ref_sp -= 1;
+                log.debug("{}: print_ref_url: ref={}", .{ pc, ref_sp });
+                try print_ref(refs[ref_sp], writer, url_fn);
                 pc += 1;
             },
             .push_loop_index => {
@@ -451,7 +468,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref) anyerror
     }
 }
 
-pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Escape_Fn, comptime Context: anytype) Ref {
+pub fn make_ref(comptime T: type, ptr: *const T, comptime Context: anytype) Ref {
     return switch (@typeInfo(T)) {
         .Void, .Undefined => .nil,
         .Null => .{ .collection = .{
@@ -480,9 +497,9 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
         }},
         .Enum => .{ .value = .{
             .data = ptr,
-            .as_number = Enum_VTable(T, escape_fn, Context).as_number,
-            .field = Enum_VTable(T, escape_fn, Context).field,
-            .print = Enum_VTable(T, escape_fn, Context).print,
+            .as_number = Enum_VTable(T, Context).as_number,
+            .field = Enum_VTable(T, Context).field,
+            .print = Enum_VTable(T, Context).print,
         }},
         .Pointer => |info| {
             switch (info.size) {
@@ -490,23 +507,23 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
                     if (info.child == u8) {
                         return .{ .value = .{
                             .data = @ptrCast(ptr),
-                            .as_number = String_VTable(escape_fn, Context).as_number,
-                            .field = String_VTable(escape_fn, Context).field,
-                            .print = String_VTable(escape_fn, Context).print,
+                            .as_number = String_VTable(Context).as_number,
+                            .field = String_VTable(Context).field,
+                            .print = String_VTable(Context).print,
                         }};
                     } else {
                         return .{ .collection = .{
                             .data = @ptrCast(ptr.ptr),
                             .size = ptr.len,
-                            .element = Array_VTable(info.child, escape_fn, Context).element,
+                            .element = Array_VTable(info.child, Context).element,
                         }};
                     }
                 },
                 .Many, .C => {
-                    return make_ref(@TypeOf(ptr.*[0]), &ptr.*[0], escape_fn, Context);
+                    return make_ref(@TypeOf(ptr.*[0]), &ptr.*[0], Context);
                 },
                 .One => {
-                    return make_ref(@TypeOf(ptr.*.*), ptr.*, escape_fn, Context);
+                    return make_ref(@TypeOf(ptr.*.*), ptr.*, Context);
                 },
             }
         },
@@ -514,30 +531,30 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
             if (info.child == u8) {
                 return .{ .value = .{
                     .data = @ptrCast(ptr),
-                    .as_number = Array_String_VTable(info.len, escape_fn, Context).as_number,
-                    .field = Array_String_VTable(info.len, escape_fn, Context).field,
-                    .print = Array_String_VTable(info.len, escape_fn, Context).print,
+                    .as_number = Array_String_VTable(info.len, Context).as_number,
+                    .field = Array_String_VTable(info.len, Context).field,
+                    .print = Array_String_VTable(info.len, Context).print,
                 }};
             } else {
                 return .{ .collection = .{
                     .data = @ptrCast(ptr),
                     .size = info.len,
-                    .element = Array_VTable(info.child, escape_fn, Context).element,
+                    .element = Array_VTable(info.child, Context).element,
                 }};
             }
         },
         .Optional => |info| .{ .collection = .{
             .data = @ptrCast(ptr),
             .size = if (ptr.* == null) 0 else 1,
-            .element = Optional_VTable(info.child, escape_fn, Context).element,
+            .element = Optional_VTable(info.child, Context).element,
         }},
         .Union => |info| {
             if (info.tag_type == null) @compileError("Unions must be tagged");
             return .{ .value = .{
                 .data = ptr,
-                .as_number = Union_VTable(T, escape_fn, Context).as_number,
-                .field = Union_VTable(T, escape_fn, Context).field,
-                .print = Union_VTable(T, escape_fn, Context).print,
+                .as_number = Union_VTable(T, Context).as_number,
+                .field = Union_VTable(T, Context).field,
+                .print = Union_VTable(T, Context).print,
             }};
         },
         .Struct => |info| {
@@ -545,14 +562,14 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime escape_fn: *const Esca
                 return .{ .collection = .{
                     .data = ptr,
                     .size = info.fields.len,
-                    .element = Struct_VTable(T, escape_fn, Context).tuple_element,
+                    .element = Struct_VTable(T, Context).tuple_element,
                 }};
             } else {
                 return .{ .value = .{
                     .data = ptr,
-                    .as_number = Struct_VTable(T, escape_fn, Context).as_number,
-                    .field = Struct_VTable(T, escape_fn, Context).field,
-                    .print = Struct_VTable(T, escape_fn, Context).print,
+                    .as_number = Struct_VTable(T, Context).as_number,
+                    .field = Struct_VTable(T, Context).field,
+                    .print = Struct_VTable(T, Context).print,
                 }};
             }
         },
@@ -582,18 +599,12 @@ fn Bool_VTable(comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
             const ptr: *const bool = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
-                .Fn => {
-                    try Context(ptr.*, writer, escape);
-                },
-                .Pointer => {
-                    try writer.print("{" ++ Context ++ "}", .{ ptr.* });
-                },
-                else => {
-                    try writer.writeAll(if (ptr.*) "true" else "false");
-                },
+                .Fn => try Context(ptr.*, writer),
+                .Pointer => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
+                else => try writer.writeAll(if (ptr.*) "true" else "false"),
             }
         }
     };
@@ -612,18 +623,12 @@ fn Int_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
-                .Fn => {
-                    try Context(ptr.*, writer, escape);
-                },
-                .Pointer => {
-                    try writer.print("{" ++ Context ++ "}", .{ ptr.* });
-                },
-                else => {
-                    try writer.print("{d}", .{ ptr.* });
-                },
+                .Fn => try Context(ptr.*, writer),
+                .Pointer => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
+                else => try writer.print("{d}", .{ ptr.* }),
             }
         }
     };
@@ -642,24 +647,18 @@ fn Float_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
-                .Fn => {
-                    try Context(ptr.*, writer, escape);
-                },
-                .Pointer => {
-                    try writer.print("{" ++ Context ++ "}", .{ ptr.* });
-                },
-                else => {
-                    try writer.print("{d}", .{ ptr.* });
-                },
+                .Fn => try Context(ptr.*, writer),
+                .Pointer => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
+                else => try writer.print("{d}", .{ ptr.* }),
             }
         }
     };
 }
 
-fn Enum_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime Context: anytype) type {
+fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
     return struct {
         pub fn as_number(self: *const anyopaque) usize {
             const ptr: *const T = @alignCast(@ptrCast(self));
@@ -682,32 +681,22 @@ fn Enum_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime 
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
-                .Fn => {
-                    try Context(ptr.*, writer, escape);
-                },
-                .Pointer => {
-                    try writer.print("{" ++ Context ++ "}", .{ ptr.* });
-                },
-                else => {
-                    if (std.enums.tagName(T, ptr.*)) |name| {
-                        if (escape) {
-                            try escape_fn(name, writer);
-                        } else {
-                            try writer.writeAll(name);
-                        }
-                    } else {
-                        try writer.print("({d})", .{ @intFromEnum(ptr.*) });
-                    }
+                .Fn => try Context(ptr.*, writer),
+                .Pointer => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
+                else => if (std.enums.tagName(T, ptr.*)) |name| {
+                    try writer.writeAll(name);
+                } else {
+                    try writer.print("({d})", .{ @intFromEnum(ptr.*) });
                 },
             }
         }
     };
 }
 
-fn String_VTable(comptime escape_fn: *const Escape_Fn, comptime Context: anytype) type {
+fn String_VTable(comptime Context: anytype) type {
     return struct {
         pub fn as_number(self: *const anyopaque) usize {
             const ptr: *const []const u8 = @alignCast(@ptrCast(self));
@@ -722,28 +711,18 @@ fn String_VTable(comptime escape_fn: *const Escape_Fn, comptime Context: anytype
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
             const ptr: *const []const u8 = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
-                .Fn => {
-                    try Context(ptr.*, writer, escape);
-                },
-                .Pointer => {
-                    try writer.print("{" ++ Context ++ "}", .{ ptr.* });
-                },
-                else => {
-                    if (escape) {
-                        try escape_fn(ptr.*, writer);
-                    } else {
-                        try writer.writeAll(ptr.*);
-                    }
-                },
+                .Fn => try Context(ptr.*, writer),
+                .Pointer => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
+                else => try writer.writeAll(ptr.*),
             }
         }
     };
 }
 
-fn Array_String_VTable(comptime length: usize, comptime escape_fn: *const Escape_Fn, comptime Context: anytype) type {
+fn Array_String_VTable(comptime length: usize, comptime Context: anytype) type {
     return struct {
         pub fn as_number(self: *const anyopaque) usize {
             _ = self;
@@ -758,43 +737,33 @@ fn Array_String_VTable(comptime length: usize, comptime escape_fn: *const Escape
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
             const ptr: *const [length]u8 = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
-                .Fn => {
-                    try Context(ptr, writer, escape);
-                },
-                .Pointer => {
-                    try writer.print("{" ++ Context ++ "}", .{ ptr });
-                },
-                else => {
-                    if (escape) {
-                        try escape_fn(ptr, writer);
-                    } else {
-                        try writer.writeAll(ptr);
-                    }
-                },
+                .Fn => try Context(ptr, writer),
+                .Pointer => try writer.print("{" ++ Context ++ "}", .{ ptr }),
+                else => try writer.writeAll(ptr),
             }
         }       
     };
 }
 
-fn Array_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime Context: anytype) type {
+fn Array_VTable(comptime T: type, comptime Context: anytype) type {
     return struct {
         pub fn element(self: *const anyopaque, index: usize) Ref {
             const ptr: [*]const T = @alignCast(@ptrCast(self));
-            return make_ref(@TypeOf(ptr[index]), &ptr[index], escape_fn, Context);
+            return make_ref(@TypeOf(ptr[index]), &ptr[index], Context);
         }
     };
 }
 
-fn Optional_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime Context: anytype) type {
+fn Optional_VTable(comptime T: type, comptime Context: anytype) type {
     return struct {
         pub fn element(self: *const anyopaque, index: usize) Ref {
             _ = index;
             const ptr: *const ?T = @alignCast(@ptrCast(self));
             if (ptr.*) |*value| {
-                return make_ref(@TypeOf(value.*), value, escape_fn, Context);
+                return make_ref(@TypeOf(value.*), value, Context);
             } else {
                 return .nil;
             }
@@ -802,7 +771,7 @@ fn Optional_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, compt
     };
 }
 
-fn Union_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime Context: anytype) type {
+fn Union_VTable(comptime T: type, comptime Context: anytype) type {
     return struct {
         pub fn as_number(self: *const anyopaque) usize {
             _ = self;
@@ -815,23 +784,23 @@ fn Union_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime
             const ordinal = @intFromEnum(ptr.*);
             inline for (0.., @typeInfo(T).Union.fields) |i, f| {
                 if (i == ordinal and std.mem.eql(u8, name, f.name)) {
-                    return make_ref(f.type, &@field(ptr.*, f.name), escape_fn, Child_Context(Context, f.name));
+                    return make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
                 }
             }
 
             if (std.mem.eql(u8, name, "tag")) {
                 const Tag = std.meta.Tag(T);
-                return make_ref(Tag, &@as(Tag, ptr.*), escape_fn, Child_Context(Context, "tag"));
+                return make_ref(Tag, &@as(Tag, ptr.*), Child_Context(Context, "tag"));
             }
 
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .Fn => {
-                    try Context(ptr.*, writer, escape);
+                    try Context(ptr.*, writer);
                 },
                 .Pointer, .Array => {
                     try writer.print("{" ++ Context ++ "}", .{ ptr.* });
@@ -840,8 +809,8 @@ fn Union_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime
                     const ordinal = @intFromEnum(ptr.*);
                     inline for (0.., @typeInfo(T).Union.fields) |i, f| {
                         if (i == ordinal) {
-                            const ref = make_ref(f.type, &@field(ptr.*, f.name), escape_fn, Child_Context(Context, f.name));
-                            try print_ref(ref, writer, escape);
+                            const ref = make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
+                            try print_ref(ref, writer, null);
                         }
                     }
                 },
@@ -850,7 +819,7 @@ fn Union_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime
     };
 }
 
-fn Struct_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptime Context: anytype) type {
+fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
     return struct {
         pub fn tuple_element(self: *const anyopaque, index: usize) Ref {
             const ptr: *const T = @alignCast(@ptrCast(self));
@@ -858,9 +827,9 @@ fn Struct_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptim
                 if (i == index) {
                     if (f.is_comptime) {
                         const val = @field(ptr.*, f.name);
-                        return make_ref(f.type, &val, escape_fn, Child_Context(Context, f.name));
+                        return make_ref(f.type, &val, Child_Context(Context, f.name));
                     } else {
-                        return make_ref(f.type, &@field(ptr.*, f.name), escape_fn, Child_Context(Context, f.name));
+                        return make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
                     }
                 }
             }
@@ -878,34 +847,28 @@ fn Struct_VTable(comptime T: type, comptime escape_fn: *const Escape_Fn, comptim
                 if (std.mem.eql(u8, name, f.name)) {
                     if (f.is_comptime) {
                         const val = @field(ptr.*, f.name);
-                        return make_ref(f.type, &val, escape_fn, Child_Context(Context, f.name));
+                        return make_ref(f.type, &val, Child_Context(Context, f.name));
                     } else {
-                        return make_ref(f.type, &@field(ptr.*, f.name), escape_fn, Child_Context(Context, f.name));
+                        return make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
                     }
                 }
             }
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter, escape: bool) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
-                .Fn => {
-                    try Context(ptr.*, writer, escape);
-                },
-                .Pointer, .Array => {
-                    try writer.print("{" ++ Context ++ "}", .{ ptr.* });
-                },
-                else => {
-                    inline for (@typeInfo(T).Struct.fields) |f| {
-                        if (f.is_comptime) {
-                            const val = @field(ptr.*, f.name);
-                            const ref = make_ref(f.type, &val, escape_fn, Child_Context(Context, f.name));
-                            try print_ref(ref, writer, escape);
-                        } else {
-                            const ref = make_ref(f.type, &@field(ptr.*, f.name), escape_fn, Child_Context(Context, f.name));
-                            try print_ref(ref, writer, escape);
-                        }
+                .Fn => try Context(ptr.*, writer),
+                .Pointer, .Array => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
+                else => inline for (@typeInfo(T).Struct.fields) |f| {
+                    if (f.is_comptime) {
+                        const val = @field(ptr.*, f.name);
+                        const ref = make_ref(f.type, &val, Child_Context(Context, f.name));
+                        try print_ref(ref, writer, null);
+                    } else {
+                        const ref = make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
+                        try print_ref(ref, writer, null);
                     }
                 },
             }
@@ -926,27 +889,7 @@ fn Child_Context_Type(comptime Context: anytype, comptime field: []const u8) typ
     return type;
 }
 
-pub fn escape_none(str: []const u8, writer: std.io.AnyWriter) anyerror!void {
-    try writer.writeAll(str);
-}
-
-pub fn escape_html(str: []const u8, writer: std.io.AnyWriter) anyerror!void {
-    var iter = std.mem.splitAny(u8, str, "&<>\"'");
-    while (iter.next()) |chunk| {
-        try writer.writeAll(chunk);
-        if (iter.index) |i| {
-            try writer.writeAll(switch (iter.buffer[i-1]) {
-                '&' => "&amp;",
-                '<' => "&lt;",
-                '>' => "&gt;",
-                '"' => "&quot;",
-                '\'' => "&#39;",
-                else => unreachable,
-            });
-        }
-    }
-}
-
 const log = std.log.scoped(.zkittle);
 
+const escape = @import("escape.zig");
 const std = @import("std");
