@@ -1,6 +1,7 @@
 pub const Parser = @import("Parser.zig");
 pub const Source = @import("Source.zig");
 pub const Token = @import("Token.zig");
+pub const escape = @import("escape.zig");
 
 const Template = @This();
 
@@ -891,5 +892,4 @@ fn Child_Context_Type(comptime Context: anytype, comptime field: []const u8) typ
 
 const log = std.log.scoped(.zkittle);
 
-const escape = @import("escape.zig");
 const std = @import("std");
