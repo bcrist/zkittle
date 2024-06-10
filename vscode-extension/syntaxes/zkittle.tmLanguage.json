@@ -360,7 +360,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.directive.zkittle",
-					"match": "(@resource|@include|@raw)\\b"
+					"match": "(@resource|@include|@raw|@url)\\b"
 				}
 			]
 		},

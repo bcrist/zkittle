@@ -85,8 +85,8 @@ The name is pronounced like "skittle," not "zee kittle".
     By default all strings will be printed with an HTML escape function.
     This can be overridden or disabled in code when generating other types of documents.
     You can also disable it for a specific expression with \\ @raw some_value //.
-    It's assumed that "true", "false", and numbers (as formatted with std.fmt.format's `{d}` rules)
-    will never need to be escaped.
+    An alternative escaping function can be used for specific expressions with \\ @url some_value //.
+    By default, this will escape using percent encoding; suitable for embedding arbitrary data in URLs.
 
     The \\ @include "path/to/template" // syntax can be used to pull the entire content of another
     template into the current one.
