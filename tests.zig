@@ -150,6 +150,18 @@ test "lexing" {
         \\eof:
         \\
     );
+
+    try test_lex(
+        \\\\ (abc).d
+        ,
+        \\open_paren:(
+        \\id:abc
+        \\close_paren:)
+        \\child:.
+        \\id:d
+        \\eof:
+        \\
+    );
 }
 
 fn test_lex(src: []const u8, expected: []const u8) !void {
@@ -518,6 +530,21 @@ test "parsing" {
         \\print_ref_escaped
         \\
     );
+
+    try test_parse(
+        \\\\ (a|b).@exists
+        ,
+        \\push_field: "a"
+        \\dupe_ref_0
+        \\is_ref_nonnil
+        \\as_number
+        \\pop_and_skip_if_nonzero: 2
+        \\pop_ref
+        \\push_field: "b"
+        \\is_ref_nonnil
+        \\print_ref_escaped
+        \\
+    );
 }
 
 var test_include: ?Source = null;
@@ -703,6 +730,19 @@ test "render" {
         , .{ .html = "<html></html>" },
         \\%3Chtml%3E%3C%2Fhtml%3E
     );
+
+    try test_template(
+        \\\\ (a|b).@exists? //1\\~
+        , .{ .a = undefined, .b = undefined },
+        \\
+    );
+
+    try test_template(
+        \\\\ (a|b).@exists? //1\\~
+        , .{ .a = undefined, .b = null },
+        \\1
+    );
+
 }
 
 fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !void {

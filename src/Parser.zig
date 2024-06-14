@@ -182,7 +182,25 @@ fn parse_within(self: *Parser) !bool {
 }
 
 fn parse_expression(self: *Parser) !bool {
-    if (!try self.parse_ref()) return false;
+    if (self.try_token(.open_paren)) {
+        if (!try self.parse_expression()) {
+            try self.include_stack.getLast().report_error(self.next_token, "Expected expression");
+            return error.InvalidTemplate;
+        }
+        try self.require_token(.close_paren);
+    } else if (!try self.parse_ref()) return false;
+
+    while (self.try_token(.child)) {
+        if (try self.parse_field_or_index_or_count()) continue;
+
+        if (self.try_token(.kw_exists)) {
+            try self.add_basic_instruction(.is_ref_nonnil);
+            continue;
+        }
+
+        try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, '#', or '@exists'");
+        return error.InvalidTemplate;
+    }
     
     if (self.try_token(.fallback)) {
         try self.add_basic_instruction(.dupe_ref_0);
@@ -213,33 +231,17 @@ fn parse_expression(self: *Parser) !bool {
 fn parse_ref(self: *Parser) !bool {
     switch (self.token_kinds[self.next_token]) {
         .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_url,
-        .condition, .within, .otherwise, .end, .child, .fallback, .alternative => return false,
-        .id, .number, .parent, .count, .self, .kw_index, .kw_exists => {},
+        .condition, .within, .otherwise, .end, .child, .fallback, .alternative,
+        .kw_exists, .open_paren, .close_paren => return false,
+        .id, .number, .parent, .count, .self, .kw_index => {},
     }
 
-    try self.parse_ref_base();
-    while (self.try_token(.child)) {
-        if (try self.parse_field_or_index_or_count()) continue;
-
-        if (self.try_token(.kw_exists)) {
-            try self.add_basic_instruction(.is_ref_nonnil);
-            continue;
-        }
-
-        try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, '#', or '@exists'");
-        return error.InvalidTemplate;
-    }
-
-    return true;
-}
-
-fn parse_ref_base(self: *Parser) !void {
     if (self.try_token(.self)) {
         try self.add_basic_instruction(.dupe_ref_0);
-        return;
+        return true;
     } else if (self.try_token(.kw_index)) {
         try self.add_basic_instruction(.push_loop_index);
-        return;
+        return true;
     }
 
     var parent_count: usize = 0;
@@ -248,7 +250,7 @@ fn parse_ref_base(self: *Parser) !void {
     if (parent_count == 0) {
         if (self.try_id()) |field_name| {
             try self.add_literal_instruction(.push_field, field_name);
-            return;
+            return true;
         }
 
         try self.add_basic_instruction(.dupe_ref_0);
@@ -256,7 +258,7 @@ fn parse_ref_base(self: *Parser) !void {
             try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, or '#'");
             return error.InvalidTemplate;
         }
-        return;
+        return true;
     }
 
     if (parent_count > self.ref_stack_depth) {
@@ -271,6 +273,8 @@ fn parse_ref_base(self: *Parser) !void {
         try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, or '#'");
         return error.InvalidTemplate;
     }
+
+    return true;
 }
 
 fn parse_field_or_index_or_count(self: *Parser) !bool {

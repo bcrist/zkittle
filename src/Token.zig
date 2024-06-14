@@ -27,6 +27,8 @@ pub const Kind = enum (u8) {
     self,        // *
     fallback,    // |
     alternative, // /
+    open_paren,  // (
+    close_paren, // )
 };
 
 
@@ -123,6 +125,14 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                 },
                 '|' => {
                     try tokens.append(allocator, .{ .kind = .fallback, .span = remaining[i .. i + 1] });
+                    i += 1;
+                },
+                '(' => {
+                    try tokens.append(allocator, .{ .kind = .open_paren, .span = remaining[i .. i + 1] });
+                    i += 1;
+                },
+                ')' => {
+                    try tokens.append(allocator, .{ .kind = .close_paren, .span = remaining[i .. i + 1] });
                     i += 1;
                 },
 
