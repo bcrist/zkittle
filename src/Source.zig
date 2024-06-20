@@ -20,7 +20,7 @@ pub fn init_buf(allocator: std.mem.Allocator, path: []const u8, source: []const 
     };
 }
 
-pub fn init_file(allocator: std.mem.Allocator, dir: *std.fs.Dir, path: []const u8) !Source {
+pub fn init_file(allocator: std.mem.Allocator, dir: std.fs.Dir, path: []const u8) !Source {
     const realpath = try dir.realpathAlloc(allocator, path);
     errdefer allocator.free(realpath);
 
