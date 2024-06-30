@@ -14,8 +14,7 @@ test "lexing" {
         \\a b c d
         \\fffff
         ,
-        \\literal:a b c d\n
-        \\literal:fffff
+        \\literal:a b c d\nfffff
         \\eof:
         \\
     );
@@ -33,7 +32,6 @@ test "lexing" {
         ,
         \\id:asdf
         \\literal:\n
-        \\literal:
         \\eof:
         \\
     );
@@ -198,31 +196,31 @@ test "parsing" {
     );
 
     try test_parse(
-        \\Hellorld!
-        \\Hellorld!
-        \\Hellorld again!
+        \\Hellorld!  This is a long line.
+        \\Hellorld!  This is a long line.
+        \\Hellorld again!!!
         ,
-        \\print_literal: "Hellorld!\n"
-        \\print_literal: "Hellorld!\nHellorld again!"
+        \\print_literal: "Hellorld!  This is a long line.\n"
+        \\print_literal: "Hellorld!  This is a long line.\nHellorld again!!!"
         \\
     );
 
         try test_parse(
-        \\A
-        \\B
-        \\C
-        \\B
-        \\C
-        \\A
-        \\A
-        \\B
-        \\C
+        \\AAAAAAAAAAAAAAAAAAAA
+        \\BBBBBBBBBBBBBBBBBBBB
+        \\CCCCCCCCCCCCCCCCCCCC
+        \\BBBBBBBBBBBBBBBBBBBB
+        \\CCCCCCCCCCCCCCCCCCCC
+        \\AAAAAAAAAAAAAAAAAAAA
+        \\AAAAAAAAAAAAAAAAAAAA
+        \\BBBBBBBBBBBBBBBBBBBB
+        \\CCCCCCCCCCCCCCCCCCCC
         \\
         ,
-        \\print_literal: "A\nB\nC\n"
-        \\print_literal: "B\nC\n"
-        \\print_literal: "A\n"
-        \\print_literal: "A\nB\nC\n"
+        \\print_literal: "AAAAAAAAAAAAAAAAAAAA\nBBBBBBBBBBBBBBBBBBBB\nCCCCCCCCCCCCCCCCCCCC\n"
+        \\print_literal: "BBBBBBBBBBBBBBBBBBBB\nCCCCCCCCCCCCCCCCCCCC\n"
+        \\print_literal: "AAAAAAAAAAAAAAAAAAAA\n"
+        \\print_literal: "AAAAAAAAAAAAAAAAAAAA\nBBBBBBBBBBBBBBBBBBBB\nCCCCCCCCCCCCCCCCCCCC\n"
         \\
     );
 

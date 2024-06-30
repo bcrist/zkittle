@@ -1,6 +1,8 @@
 kind: Kind,
 span: []const u8,
 
+const min_interned_literal_length = 15;
+
 const Token = @This();
 
 pub const List = std.MultiArrayList(Token);
@@ -40,11 +42,21 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
     while (remaining.len > 0) {
         const literal = remaining[0 .. std.mem.indexOf(u8, remaining, "\\\\") orelse remaining.len];
         if (literal.len > 0) {
-            var line_iter = std.mem.splitScalar(u8, literal, '\n');
-            while (line_iter.next()) |line| {
-                var line_with_lf = line;
-                if (line_iter.peek() != null) line_with_lf.len += 1;
-                try tokens.append(allocator, .{ .kind = .literal, .span = line_with_lf });
+            var literal_start: usize = 0;
+            var search_start: usize = 0;
+
+            while (std.mem.indexOfScalarPos(u8, literal, search_start, '\n')) |end_of_line| {
+                search_start = end_of_line + 1;
+                const prefix_len = search_start - literal_start;
+                const remaining_len = literal.len - search_start;
+                if (prefix_len > min_interned_literal_length and remaining_len > min_interned_literal_length) {
+                    try tokens.append(allocator, .{ .kind = .literal, .span = literal[literal_start..search_start] });
+                    literal_start = search_start;
+                }
+            }
+
+            if (literal_start < literal.len) {
+                try tokens.append(allocator, .{ .kind = .literal, .span = literal[literal_start..] });
             }
         }
         remaining = remaining[@min(remaining.len, literal.len + 2)..];
