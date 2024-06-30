@@ -40,7 +40,12 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
     while (remaining.len > 0) {
         const literal = remaining[0 .. std.mem.indexOf(u8, remaining, "\\\\") orelse remaining.len];
         if (literal.len > 0) {
-            try tokens.append(allocator, .{ .kind = .literal, .span = literal });
+            var line_iter = std.mem.splitScalar(u8, literal, '\n');
+            while (line_iter.next()) |line| {
+                var line_with_lf = line;
+                if (line_iter.peek() != null) line_with_lf.len += 1;
+                try tokens.append(allocator, .{ .kind = .literal, .span = line_with_lf });
+            }
         }
         remaining = remaining[@min(remaining.len, literal.len + 2)..];
 

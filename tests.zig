@@ -14,7 +14,8 @@ test "lexing" {
         \\a b c d
         \\fffff
         ,
-        \\literal:a b c d\nfffff
+        \\literal:a b c d\n
+        \\literal:fffff
         \\eof:
         \\
     );
@@ -32,6 +33,7 @@ test "lexing" {
         ,
         \\id:asdf
         \\literal:\n
+        \\literal:
         \\eof:
         \\
     );
@@ -184,6 +186,43 @@ test "parsing" {
         \\Hellorld!
         ,
         \\print_literal: "Hellorld!"
+        \\
+    );
+
+    try test_parse(
+        \\Hellorld!
+        \\Multiple lines!
+        ,
+        \\print_literal: "Hellorld!\nMultiple lines!"
+        \\
+    );
+
+    try test_parse(
+        \\Hellorld!
+        \\Hellorld!
+        \\Hellorld again!
+        ,
+        \\print_literal: "Hellorld!\n"
+        \\print_literal: "Hellorld!\nHellorld again!"
+        \\
+    );
+
+        try test_parse(
+        \\A
+        \\B
+        \\C
+        \\B
+        \\C
+        \\A
+        \\A
+        \\B
+        \\C
+        \\
+        ,
+        \\print_literal: "A\nB\nC\n"
+        \\print_literal: "B\nC\n"
+        \\print_literal: "A\n"
+        \\print_literal: "A\nB\nC\n"
         \\
     );
 

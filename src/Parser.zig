@@ -76,8 +76,28 @@ fn parse_block(self: *Parser) anyerror!void {
 fn parse_item(self: *Parser) !bool {
     switch (self.token_kinds[self.next_token]) {
         .literal => {
-            try self.add_print_literal_instruction(self.token_spans[self.next_token]);
+            const initial_span = self.token_spans[self.next_token];
             self.next_token += 1;
+
+            if (initial_span.len == 0) return true;
+
+            var literal_ref = try self.intern_literal(initial_span);
+            while (self.token_kinds[self.next_token] == .literal) {
+                const next_span = self.token_spans[self.next_token];
+                if (next_span.len == 0) {
+                    self.next_token += 1;
+                    continue;
+                }
+
+                const next_ref = try self.intern_literal(next_span);
+
+                if (literal_ref.offset + literal_ref.length != next_ref.offset) break;
+
+                literal_ref.length += next_ref.length;
+                self.next_token += 1;
+            }
+            
+            try self.add_literal_ref_instruction(.print_literal, literal_ref);
             return true;
         },
         .kw_resource => {
@@ -413,6 +433,9 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !vo
 }
 
 fn add_literal_instruction(self: *Parser, op: Template.Opcode, literal: []const u8) !void {
+    try self.add_literal_ref_instruction(op, try self.intern_literal(literal));
+}
+fn add_literal_ref_instruction(self: *Parser, op: Template.Opcode, literal_ref: Template.Literal_Ref) !void {
     switch (op) {
         .print_literal, // literal_ref
         .field, // literal_ref
@@ -443,7 +466,6 @@ fn add_literal_instruction(self: *Parser, op: Template.Opcode, literal: []const 
         .push_nil,
         => unreachable,
     }
-    const literal_ref = try self.intern_literal(literal);
     try self.instructions.append(self.gpa, .{
         .op = op,
         .data = .{ .literal_string = literal_ref },
@@ -492,18 +514,18 @@ fn check_and_increment_ref_stack(self: *Parser) !void {
 }
 
 fn intern_literal(self: *Parser, literal: []const u8) !Template.Literal_Ref {
-    try self.literal_data.ensureUnusedCapacity(self.gpa, literal.len);
-    const gop = try self.literal_dedup.getOrPut(self.gpa, literal);
-    if (!gop.found_existing) {
-        const start = self.literal_data.items.len;
-        self.literal_data.appendSliceAssumeCapacity(literal);
-        gop.key_ptr.* = literal;
-        gop.value_ptr.* = .{
-            .offset = @intCast(start),
-            .length = @intCast(literal.len),
-        };
-    }
-    return gop.value_ptr.*;
+    if (self.literal_dedup.get(literal)) |ref| return ref;
+
+    const start = self.literal_data.items.len;
+    try self.literal_data.appendSlice(self.gpa, literal);
+
+    const ref: Template.Literal_Ref = .{
+        .offset = @intCast(start),
+        .length = @intCast(literal.len),
+    };
+
+    try self.literal_dedup.put(self.gpa, literal, ref);
+    return ref;
 }
 
 const Template = @import("Template.zig");
