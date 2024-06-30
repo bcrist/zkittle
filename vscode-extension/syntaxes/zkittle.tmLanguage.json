@@ -335,28 +335,74 @@
 			]
 		},
 		"block_helper": {
-			"begin": "(\\\\\\\\)",
-			"end": "(//|$)",
+			"begin": "\\\\\\\\",
+			"end": "//|$",
 			"name": "meta.preprocessor.string.zkittle",
-			"beginCaptures": { "1": { "name": "punctuation.definition.template-expression.begin.zkittle" } },
-			"endCaptures": { "1": { "name": "punctuation.definition.template-expression.end.zkittle" } },
+			"beginCaptures": { "0": { "name": "punctuation.definition.template-expression.begin.zkittle" } },
+			"endCaptures": { "0": { "name": "punctuation.definition.template-expression.end.zkittle" } },
 			"patterns": [
-				{ "include": "#string-double-quoted" },
-				{ "include": "#operators" },
-				{ "include": "#directives" },
-				{ "include": "#labels" },
-				{ "include": "#zkittle_comments" }
+				{ "include": "#zkittle_string" },
+				{ "include": "#zkittle_operators" },
+				{ "include": "#zkittle_directives" },
+				{ "include": "#zkittle_labels" },
+				{ "include": "#zkittle_comments" },
+				{ "include": "#zkittle_paren_expr" }
 			]
 		},
-		"operators": {
+		"zkittle_string": {
+			"begin": "\"",
+			"end": "(?=//)|$|\"",
+			"name": "string.quoted.double.zkittle",
+			"beginCaptures": {
+				"0": { "name": "punctuation.definition.string.begin.zkittle" }
+			},
+			"endCaptures": {
+				"0": { "name": "punctuation.definition.string.end.zkittle" }
+			}
+		},
+		"zkittle_paren_expr": {
 			"patterns": [
 				{
-					"name": "keyword.control.operator.zkittle",
-					"match": "\\?|:|;|~|\\||/|\\(|\\)"
+					"begin": "\\(",
+					"end": "(?=//)|$|\\)",
+					"endCaptures": {
+						"0": {
+							"name": "keyword.control.operator.zkittle"
+						}
+					},
+					"beginCaptures": {
+						"0": {
+							"name": "keyword.control.operator.zkittle"
+						}
+					},
+					"patterns": [
+						{ "include": "#zkittle_string" },
+						{ "include": "#zkittle_expr_operators" },
+						{ "include": "#zkittle_labels" },
+						{ "include": "#zkittle_comments" },
+						{ "include": "#zkittle_paren_expr" }
+					]
 				}
 			]
 		},
-		"directives": {
+		"zkittle_expr_operators": {
+			"patterns": [
+				{
+					"name": "keyword.control.operator.zkittle",
+					"match": "\\||/|\\."
+				}
+			]
+		},
+		"zkittle_operators": {
+			"patterns": [
+				{
+					"name": "keyword.control.operator.zkittle",
+					"match": "\\?|:|;|~"
+				},
+				{ "include": "#zkittle_expr_operators" }
+			]
+		},
+		"zkittle_directives": {
 			"patterns": [
 				{
 					"name": "keyword.control.directive.zkittle",
@@ -364,11 +410,11 @@
 				}
 			]
 		},
-		"labels": {
+		"zkittle_labels": {
 			"patterns": [
 				{
 					"name": "variable.zkittle",
-					"match": "(\\^\\s*)*([a-zA-Z_0-9]+|\\#|\\*|@index)(\\s*\\.\\s*([a-zA-Z_0-9]+|\\#|@index|@exists))*"
+					"match": "(\\^\\s*)*([a-zA-Z_0-9]+|\\#|\\*|@index\\b|@exists\\b)"
 				}
 			]
 		},
@@ -424,7 +470,7 @@
 		"string-single-quoted": {
 			"begin": "'",
 			"end": "'",
-			"name": "string.quoted.single.zkittle",
+			"name": "string.quoted.single.html",
 			"endCaptures": {
 				"0": {
 					"name": "punctuation.definition.string.end.html"
@@ -437,6 +483,23 @@
 			},
 			"patterns": [
 				{ "include": "#escaped-single-quote" },
+				{ "include": "#block_comments" },
+				{ "include": "#comments" },
+				{ "include": "#block_helper" }
+			]
+		},
+		"string-double-quoted": {
+			"begin": "\"",
+			"end": "\"",
+			"name": "string.quoted.double.html",
+			"beginCaptures": {
+				"0": { "name": "punctuation.definition.string.begin.html" }
+			},
+			"endCaptures": {
+				"0": { "name": "punctuation.definition.string.end.html" }
+			},
+			"patterns": [
+				{ "include": "#escaped-double-quote" },
 				{ "include": "#block_comments" },
 				{ "include": "#comments" },
 				{ "include": "#block_helper" }
@@ -455,23 +518,6 @@
 		"escaped-double-quote": {
 			"name": "constant.character.escape.js",
 			"match": "\\\\\""
-		},
-		"string-double-quoted": {
-			"begin": "\"",
-			"end": "\"",
-			"name": "string.quoted.double.zkittle",
-			"beginCaptures": {
-				"0": { "name": "punctuation.definition.string.begin.html" }
-			},
-			"endCaptures": {
-				"0": { "name": "punctuation.definition.string.end.html" }
-			},
-			"patterns": [
-				{ "include": "#escaped-double-quote" },
-				{ "include": "#block_comments" },
-				{ "include": "#comments" },
-				{ "include": "#block_helper" }
-			]
 		},
 		"tag_generic_attribute": {
 			"begin": "\\b([a-zA-Z0-9_-]+)\\b\\s*(=)",
