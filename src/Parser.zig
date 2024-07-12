@@ -1,10 +1,12 @@
 gpa: std.mem.Allocator,
 
+callback_context: ?*anyopaque = null,
+
 /// N.B. The memory referenced by the returned source must remain stable and constant until the parse is complete!
-include_callback: *const fn (id: []const u8) anyerror!Source,
+include_callback: *const fn (p: *Parser, id: []const u8) anyerror!Source,
 
 /// N.B. The memory returned must remain stable and constant until the parse is complete!
-resource_callback: *const fn (id: []const u8) anyerror![]const u8,
+resource_callback: *const fn (p: *Parser, id: []const u8) anyerror![]const u8,
 
 instructions: std.MultiArrayList(Instruction) = .{},
 fragments: std.StringArrayHashMapUnmanaged(Fragment) = .{},
@@ -179,7 +181,7 @@ fn parse_item(self: *Parser) !bool {
         .kw_resource => {
             self.next_token += 1;
             const id = try self.require_id();
-            if (self.resource_callback(id)) |literal| {
+            if (self.resource_callback(self, id)) |literal| {
                 try self.add_print_literal_instruction(literal);
             } else |err| {
                 try self.include_stack.getLast().report_error(self.next_token - 1, @errorName(err));
@@ -189,7 +191,7 @@ fn parse_item(self: *Parser) !bool {
         .kw_include => {
             self.next_token += 1;
             const id = try self.require_id();
-            if (self.include_callback(id)) |source| {
+            if (self.include_callback(self, id)) |source| {
                 try self.append(source);
             } else |err| {
                 try self.include_stack.getLast().report_error(self.next_token - 1, @errorName(err));

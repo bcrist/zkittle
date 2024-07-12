@@ -601,7 +601,8 @@ test "parsing" {
 
 var test_include: ?Source = null;
 
-fn test_include_callback(id: []const u8) anyerror!Source {
+fn test_include_callback(p: *Parser, id: []const u8) anyerror!Source {
+    _ = p;
     _ = id;
 
     if (test_include) |source| {
@@ -617,7 +618,8 @@ fn test_include_callback(id: []const u8) anyerror!Source {
     return test_include.?;
 }
 
-fn test_resource_callback(id: []const u8) anyerror![]const u8 {
+fn test_resource_callback(p: *Parser, id: []const u8) anyerror![]const u8 {
+    _ = p;
     _ = id;
     return "test resource content";
 }
