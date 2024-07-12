@@ -18,13 +18,17 @@ pub fn render(self: Template, writer: std.io.AnyWriter, obj: anytype, comptime o
 pub const max_stack_size = 31;
 
 pub const Opcode = enum (u8) {
-    print_literal, // literal_ref
+    push_var, // offset -- should be followed immediately by print_literal_var_len, field_var_len, push_field_var_len, etc.
+    print_literal, // literal_string
+    print_literal_var_len, // offset
     as_number,
     print_ref_raw,
     print_ref_escaped,
     print_ref_url,
     field, // literal_ref
+    field_var_len, // offset
     push_field, // literal_ref
+    push_field_var_len, // offset
     index, // offset
     begin_loop,
     end_loop,
@@ -45,13 +49,17 @@ pub const Opcode = enum (u8) {
 
 pub const Operands = extern union {
     none: void,
-    offset: usize,
-    literal_string: Literal_Ref,
+    offset: u32,
+    literal_string: u32,
+
+    pub fn literal_ref(self: Operands) Literal_Ref {
+        return @bitCast(self.literal_string);
+    }
 };
 
-pub const Literal_Ref = extern struct {
-    offset: u32,
-    length: u32,
+pub const Literal_Ref = packed struct {
+    offset: u23,
+    length: u9,
 };
 
 pub const Ref = union (enum) {
@@ -84,51 +92,33 @@ opcodes: []const Opcode,
 operands: [*]const Operands,
 literal_data: []const u8,
 
-pub fn init_static(instruction_count: usize, instruction_data: []const u64, literal_data: []const u8) Template {
-    std.debug.assert(@sizeOf(u64) == @sizeOf(Operands));
-    std.debug.assert(@alignOf(u64) == @alignOf(Operands));
-    const byte_data = std.mem.sliceAsBytes(instruction_data);
-    const end_of_operands = instruction_count * @sizeOf(Operands);
-    const end_of_opcodes = end_of_operands + instruction_count * @sizeOf(Opcode);
+pub fn init_static(comptime op_data: []const u8, comptime operand_data: []const u32, comptime literal_data: []const u8) Template {
+    std.debug.assert(op_data.len == operand_data.len);
+    const ops: []const Opcode = @ptrCast(op_data);
+    const operands: []const Operands = @ptrCast(operand_data);
     return .{
-        .opcodes = @ptrCast(byte_data[end_of_operands..end_of_opcodes]),
-        .operands = @ptrCast(byte_data),
+        .opcodes = ops,
+        .operands = operands.ptr,
         .literal_data = literal_data,
     };
 }
 
-pub fn get_static_instruction_data(self: *Template, allocator: std.mem.Allocator) ![]u64 {
-    std.debug.assert(@sizeOf(u64) == @sizeOf(Operands));
+pub fn init(allocator: std.mem.Allocator, ops: []const Opcode, operands: []const Operands, literal_data: []const u8) !Template {
+    std.debug.assert(ops.len == operands.len);
 
-    const bytes_needed = (@sizeOf(Operands) + @sizeOf(Opcode)) * self.opcodes.len;
-    const words_needed = std.mem.alignForward(usize, bytes_needed, @sizeOf(u64)) / @sizeOf(u64);
+    const owned_opcodes = try allocator.dupe(Opcode, ops);
+    errdefer allocator.free(owned_opcodes);
 
-    var buf = try allocator.alloc(u64, words_needed);
+    const owned_operands = try allocator.dupe(Operands, operands);
+    errdefer allocator.free(owned_operands);
 
-    const operands: []const Operands = self.operands[0..self.opcodes.len];
-
-    @memcpy(std.mem.sliceAsBytes(buf[0..operands.len]), std.mem.sliceAsBytes(operands));
-    @memcpy(std.mem.sliceAsBytes(buf[operands.len..]).ptr, std.mem.sliceAsBytes(self.opcodes));
-
-    return buf;
-}
-
-pub fn init(allocator: std.mem.Allocator, ops: []const Opcode, op_data: []const Operands, literal_data: []const u8) !Template {
-    std.debug.assert(ops.len == op_data.len);
-
-    const opcodes = try allocator.dupe(Opcode, ops);
-    errdefer allocator.free(opcodes);
-
-    const operands = try allocator.dupe(Operands, op_data);
-    errdefer allocator.free(operands);
-
-    const literal_data_copy = try allocator.dupe(u8, literal_data);
-    errdefer allocator.free(literal_data_copy);
+    const owned_literal_data = try allocator.dupe(u8, literal_data);
+    errdefer allocator.free(owned_literal_data);
 
     return .{
-        .opcodes = opcodes,
-        .operands = operands.ptr,
-        .literal_data = literal_data_copy,
+        .opcodes = owned_opcodes,
+        .operands = owned_operands.ptr,
+        .literal_data = owned_literal_data,
     };
 }
 
@@ -139,7 +129,7 @@ pub fn deinit(self: *Template, allocator: std.mem.Allocator) void {
 }
 
 fn literal(self: Template, pc: usize) []const u8 {
-    const ref = self.operands[pc].literal_string;
+    const ref = self.operands[pc].literal_ref();
     return self.literal_data[ref.offset..][0..ref.length];
 }
 
@@ -218,18 +208,18 @@ fn bool_ref(b: bool) Ref {
     }};
 }
 
-fn lookup_field(self: Template, ref: Ref, pc: usize) !Ref {
+fn lookup_field(ref: Ref, name: []const u8, pc: usize) !Ref {
     switch (ref) {
         .nil => return .nil,
         .collection => {
-            log.debug("Expected struct with field named {s}; found collection (pc={d})", .{ self.literal(pc), pc });
+            log.debug("Expected struct with field named {s}; found collection (pc={d})", .{ name, pc });
             return .nil;
         },
         .value => |v| {
-            return v.field(v.data, self.literal(pc));
+            return v.field(v.data, name);
         },
         .inline_value => |v| {
-            return v.field(v.data, self.literal(pc));
+            return v.field(v.data, name);
         },
     }
 }
@@ -259,7 +249,7 @@ fn lookup_index(ref: Ref, index: usize, pc: usize) !Ref {
 pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_fn: *const escape.Fn, url_fn: *const escape.Fn) anyerror!void {
     const opcodes = self.opcodes;
 
-    var variables: [max_stack_size]usize = .{ 0 } ** max_stack_size;
+    var variables: [max_stack_size + 1]usize = .{ 0 } ** (max_stack_size + 1);
     var refs: [max_stack_size + 1]Ref = undefined;
     refs[0] = root_ref;
 
@@ -269,10 +259,27 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
     var pc: usize = 0;
     while (pc < opcodes.len) {
         switch (opcodes[pc]) {
+            .push_var => {
+                const offset = self.operands[pc].offset;
+                log.debug("{}: push_var: var={} n={}", .{ pc, variable_sp, offset });
+                variables[variable_sp] = offset;
+                variable_sp += 1;
+                pc += 1;
+            },
             .print_literal => {
                 const lit = self.literal(pc);
                 log.debug("{}: print_literal: {}", .{ pc, std.zig.fmtEscapes(lit) });
                 try writer.writeAll(lit);
+                pc += 1;
+            },
+            .print_literal_var_len => {
+                if (variable_sp == 0) return error.InvalidTemplate;
+                const offset = self.operands[pc].offset;
+                const len = variables[variable_sp - 1];
+                const lit = self.literal_data[offset..][0..len];
+                log.debug("{}: print_literal_var_len: {}", .{ pc, std.zig.fmtEscapes(lit) });
+                try writer.writeAll(lit);
+                variable_sp -= 1;
                 pc += 1;
             },
             .print_ref_raw => {
@@ -309,16 +316,29 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             },
             .field => {
                 if (ref_sp == 0) return error.InvalidTemplate;
-                log.debug("{}: field: ref={}", .{ pc, ref_sp - 1 });
-                refs[ref_sp - 1] = try self.lookup_field(refs[ref_sp - 1], pc);
+                const lit = self.literal(pc);
+                log.debug("{}: field: ref={} name={s}", .{ pc, ref_sp - 1, lit });
+                refs[ref_sp - 1] = try lookup_field(refs[ref_sp - 1], lit, pc);
+                pc += 1;
+            },
+            .field_var_len => {
+                if (ref_sp == 0) return error.InvalidTemplate;
+                if (variable_sp == 0) return error.InvalidTemplate;
+                const offset = self.operands[pc].offset;
+                const len = variables[variable_sp - 1];
+                const lit = self.literal_data[offset..][0..len];
+                log.debug("{}: field_var_len: ref={} name={s}", .{ pc, ref_sp - 1, lit });
+                refs[ref_sp - 1] = try lookup_field(refs[ref_sp - 1], lit, pc);
+                variable_sp -= 1;
                 pc += 1;
             },
             .push_field => {
                 if (ref_sp == 0) return error.InvalidTemplate;
-                log.debug("{}: push_field: ref={}", .{ pc, ref_sp });
+                const lit = self.literal(pc);
+                log.debug("{}: push_field: ref={} name={s}", .{ pc, ref_sp, lit });
                 var i = ref_sp;
                 while (i > 0) : (i -= 1) {
-                    const ref = try self.lookup_field(refs[i - 1], pc);
+                    const ref = try lookup_field(refs[i - 1], lit, pc);
                     if (ref != .nil) {
                         refs[ref_sp] = ref;
                         break;
@@ -327,6 +347,27 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                     refs[ref_sp] = .nil;
                 }
                 ref_sp += 1;
+                pc += 1;
+            },
+            .push_field_var_len => {
+                if (ref_sp == 0) return error.InvalidTemplate;
+                if (variable_sp == 0) return error.InvalidTemplate;
+                const offset = self.operands[pc].offset;
+                const len = variables[variable_sp - 1];
+                const lit = self.literal_data[offset..][0..len];
+                log.debug("{}: push_field_var_len: ref={} name={s}", .{ pc, ref_sp, lit });
+                var i = ref_sp;
+                while (i > 0) : (i -= 1) {
+                    const ref = try lookup_field(refs[i - 1], lit, pc);
+                    if (ref != .nil) {
+                        refs[ref_sp] = ref;
+                        break;
+                    }
+                } else {
+                    refs[ref_sp] = .nil;
+                }
+                ref_sp += 1;
+                variable_sp -= 1;
                 pc += 1;
             },
             .index => {

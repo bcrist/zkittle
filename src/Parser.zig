@@ -9,8 +9,8 @@ resource_callback: *const fn (id: []const u8) anyerror![]const u8,
 instructions: std.MultiArrayList(Instruction) = .{},
 fragments: std.StringArrayHashMapUnmanaged(Fragment) = .{},
 literal_data: std.ArrayListUnmanaged(u8) = .{},
-literal_dedup: std.StringHashMapUnmanaged(Template.Literal_Ref) = .{},
-ref_stack_depth: usize = 0,
+literal_dedup: std.StringHashMapUnmanaged(Literal_Ref) = .{},
+ref_stack_depth: u32 = 0,
 
 include_stack: std.ArrayListUnmanaged(Source) = .{},
 
@@ -21,6 +21,24 @@ next_token: usize = 0,
 const Instruction = struct {
     op: Template.Opcode,
     data: Template.Operands,
+};
+
+pub const Literal_Ref = packed struct {
+    offset: u32,
+    length: u32,
+
+    pub fn small(self: Literal_Ref) ?Template.Literal_Ref {
+        const Offset = std.meta.FieldType(Template.Literal_Ref, .offset);
+        const Length = std.meta.FieldType(Template.Literal_Ref, .length);
+
+        if (self.offset > std.math.maxInt(Offset)) return null;
+        if (self.length > std.math.maxInt(Length)) return null;
+        
+        return .{
+            .offset = @intCast(self.offset),
+            .length = @intCast(self.length),
+        };
+    }
 };
 
 // A reference to a slice of the instructions array
@@ -319,7 +337,7 @@ fn parse_ref(self: *Parser) !bool {
         return true;
     }
 
-    var parent_count: usize = 0;
+    var parent_count: u32 = 0;
     while (self.try_token(.parent)) parent_count += 1;
 
     if (parent_count == 0) {
@@ -358,7 +376,7 @@ fn parse_field_or_index_or_count(self: *Parser) !bool {
 
     } else if (self.try_token(.number)) {
         const index_str = self.token_spans[self.next_token - 1];
-        const index = try std.fmt.parseInt(usize, index_str, 10);
+        const index = try std.fmt.parseInt(u32, index_str, 10);
         try self.add_offset_instruction(.index, index);
 
     } else if (self.try_token(.kw_count)) {
@@ -405,8 +423,8 @@ fn add_print_literal_instruction(self: *Parser, literal: []const u8) !void {
     try self.add_literal_instruction(.print_literal, literal);
 }
 
-fn pc(self: *Parser) usize {
-    return self.instructions.len;
+fn pc(self: *Parser) u32 {
+    return @intCast(self.instructions.len);
 }
 
 fn add_basic_instruction(self: *Parser, op: Template.Opcode) !void {
@@ -421,6 +439,10 @@ fn add_basic_instruction(self: *Parser, op: Template.Opcode) !void {
         .skip, // offset
         .skip_if_equal, // offset
         .increment_and_retry_if_less, // offset
+        .push_var,
+        .print_literal_var_len,
+        .field_var_len,
+        .push_field_var_len,
         => unreachable,
 
         .print_ref_raw,
@@ -450,7 +472,7 @@ fn add_basic_instruction(self: *Parser, op: Template.Opcode) !void {
     });
 }
 
-fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !void {
+fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: u32) !void {
     switch (op) {
         .print_literal, // literal_ref
         .print_ref_raw,
@@ -476,10 +498,16 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !vo
         .pop_and_skip_if_nonzero, // offset
         .skip, // offset
         .skip_if_equal, // offset
+        .push_var,
         => {},
 
         .dupe_ref, // offset
         => try self.check_and_increment_ref_stack(),
+
+        .print_literal_var_len,
+        .field_var_len,
+        .push_field_var_len,
+        => unreachable, // these are offset instructions, but they should be handled with add_literal_ref_instruction
     }
     try self.instructions.append(self.gpa, .{
         .op = op,
@@ -487,7 +515,7 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !vo
     });
 }
 
-fn add_loop_instruction(self: *Parser, op: Template.Opcode, target_address: usize) !void {
+fn add_loop_instruction(self: *Parser, op: Template.Opcode, target_address: u32) !void {
     switch (op) {
         .print_literal, // literal_ref
         .field, // literal_ref
@@ -511,6 +539,10 @@ fn add_loop_instruction(self: *Parser, op: Template.Opcode, target_address: usiz
         .pop_and_skip_if_zero, // offset
         .pop_and_skip_if_nonzero, // offset
         .skip, // offset
+        .push_var,
+        .print_literal_var_len,
+        .field_var_len,
+        .push_field_var_len,
         => unreachable,
 
         .increment_and_retry_if_less, // offset
@@ -526,7 +558,7 @@ fn add_loop_instruction(self: *Parser, op: Template.Opcode, target_address: usiz
 fn add_literal_instruction(self: *Parser, op: Template.Opcode, literal: []const u8) !void {
     try self.add_literal_ref_instruction(op, try self.intern_literal(literal));
 }
-fn add_literal_ref_instruction(self: *Parser, op: Template.Opcode, literal_ref: Template.Literal_Ref) !void {
+fn add_literal_ref_instruction(self: *Parser, op: Template.Opcode, literal_ref: Literal_Ref) !void {
     switch (op) {
         .print_literal, // literal_ref
         .field, // literal_ref
@@ -555,15 +587,36 @@ fn add_literal_ref_instruction(self: *Parser, op: Template.Opcode, literal_ref: 
         .increment_and_retry_if_less, // offset
         .is_ref_nonnil,
         .push_nil,
+        .print_literal_var_len,
+        .field_var_len,
+        .push_field_var_len,
+        .push_var,
         => unreachable,
     }
-    try self.instructions.append(self.gpa, .{
-        .op = op,
-        .data = .{ .literal_string = literal_ref },
-    });
+
+    if (literal_ref.small()) |ref| {
+        try self.instructions.append(self.gpa, .{
+            .op = op,
+            .data = .{ .literal_string = @bitCast(ref) },
+        });
+    } else {
+        try self.instructions.append(self.gpa, .{
+            .op = .push_var,
+            .data = .{ .offset = literal_ref.length },
+        });
+        try self.instructions.append(self.gpa, .{
+            .op = switch (op) {
+                .print_literal => .print_literal_var_len,
+                .field => .field_var_len,
+                .push_field => .push_field_var_len,
+                else => unreachable,
+            },
+            .data = .{ .offset = literal_ref.offset },
+        });
+    }
 }
 
-fn finalize_skip_instruction(self: *Parser, instruction_address: usize, target_address: usize) void {
+fn finalize_skip_instruction(self: *Parser, instruction_address: u32, target_address: u32) void {
     switch (self.instructions.items(.op)[instruction_address]) {
         .print_literal, // literal_ref
         .field, // literal_ref
@@ -584,6 +637,10 @@ fn finalize_skip_instruction(self: *Parser, instruction_address: usize, target_a
         .increment_and_retry_if_less, // offset
         .is_ref_nonnil,
         .push_nil,
+        .push_var,
+        .print_literal_var_len,
+        .field_var_len,
+        .push_field_var_len,
         => unreachable,
 
         .skip_if_equal, // offset
@@ -604,13 +661,13 @@ fn check_and_increment_ref_stack(self: *Parser) !void {
     self.ref_stack_depth += 1;
 }
 
-fn intern_literal(self: *Parser, literal: []const u8) !Template.Literal_Ref {
+fn intern_literal(self: *Parser, literal: []const u8) !Literal_Ref {
     if (self.literal_dedup.get(literal)) |ref| return ref;
 
     const start = self.literal_data.items.len;
     try self.literal_data.appendSlice(self.gpa, literal);
 
-    const ref: Template.Literal_Ref = .{
+    const ref: Literal_Ref = .{
         .offset = @intCast(start),
         .length = @intCast(literal.len),
     };

@@ -205,7 +205,7 @@ test "parsing" {
         \\
     );
 
-        try test_parse(
+    try test_parse(
         \\AAAAAAAAAAAAAAAAAAAA
         \\BBBBBBBBBBBBBBBBBBBB
         \\CCCCCCCCCCCCCCCCCCCC
@@ -586,6 +586,17 @@ test "parsing" {
         \\print_ref_escaped
         \\
     );
+
+    try test_parse(
+        \\verylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstring0
+        \\verylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstring1
+        \\verylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstring2
+        \\verylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstring3
+        ,
+        \\push_var: 679
+        \\print_literal_var_len: 0
+        \\
+    );
 }
 
 var test_include: ?Source = null;
@@ -637,12 +648,13 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
         try writer.writeAll(@tagName(opcode));
         switch (opcode) {
             .print_literal, .field, .push_field => {
-                const ref = operands.literal_string;
+                const ref = operands.literal_ref();
                 const span = template.literal_data[ref.offset..][0..ref.length];
                 try writer.print(": \"{}\"", .{ std.zig.fmtEscapes(span) });
             },
+            .print_literal_var_len, .field_var_len, .push_field_var_len,
             .skip_if_equal, .increment_and_retry_if_less,
-            .index, .dupe_ref, .skip,
+            .index, .dupe_ref, .skip, .push_var,
             .pop_and_skip_if_zero, .pop_and_skip_if_nonzero => {
                 try writer.print(": {}", .{ operands.offset });
             },
@@ -859,37 +871,6 @@ fn test_template_alloc(allocator: std.mem.Allocator, source_str: []const u8, fra
     const writer = temp.writer();
     try template.render(writer.any(), value, .{});
     try std.testing.expectEqualStrings(expected, temp.items);
-}
-
-test "init_static" {
-    const source_str = 
-        \\\\ hello: * //
-        \\\\ ~
-        ;
-
-    var parser: Parser = .{
-        .gpa = std.testing.allocator,
-        .include_callback = test_include_callback,
-        .resource_callback = test_resource_callback,
-    };
-    defer parser.deinit();
-
-    var source = try Source.init_buf(std.testing.allocator, "source", source_str);
-    defer source.deinit(std.testing.allocator);
-
-    try parser.append(source);
-
-    var template = try parser.finish(std.testing.allocator, true);
-    defer template.deinit(std.testing.allocator);
-
-    const instruction_data = try template.get_static_instruction_data(std.testing.allocator);
-    defer std.testing.allocator.free(instruction_data);
-
-    var template2 = Template.init_static(template.opcodes.len, instruction_data, template.literal_data);
-
-    try std.testing.expectEqualSlices(Template.Opcode, template.opcodes, template2.opcodes);
-    try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(template.operands[0..template.opcodes.len]), std.mem.sliceAsBytes(template2.operands[0..template2.opcodes.len]));
-    try std.testing.expectEqualStrings(template.literal_data, template2.literal_data);
 }
 
 pub fn main() !void {
