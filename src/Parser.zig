@@ -43,10 +43,9 @@ pub const Literal_Ref = packed struct {
 
 // A reference to a slice of the instructions array
 const Fragment = struct {
-    source_hash: u64,
-    token: usize,
-    first: usize,
-    len: usize,
+    content: []const u8,
+    first_instruction: usize,
+    instruction_count: usize,
 };
 
 const Parser = @This();
@@ -90,8 +89,8 @@ pub fn append(self: *Parser, source: Source) anyerror!void {
 
 pub fn get_fragment(self: *Parser, allocator: std.mem.Allocator, name: []const u8) !?Template {
     if (self.fragments.get(name)) |frag| {
-        const ops = self.instructions.items(.op)[frag.first..][0..frag.len];
-        const data = self.instructions.items(.data)[frag.first..][0..frag.len];
+        const ops = self.instructions.items(.op)[frag.first_instruction..][0..frag.instruction_count];
+        const data = self.instructions.items(.data)[frag.first_instruction..][0..frag.instruction_count];
         return try Template.init(allocator, ops, data, self.literal_data.items);
     }
     return null;
@@ -149,26 +148,30 @@ fn parse_item(self: *Parser) !bool {
             self.next_token += 1;
             const fragment_token = self.next_token;
             const fragment = try self.require_id();
+            const begin_token = self.next_token;
             const begin = self.pc();
             try self.parse_block();
             const end = self.pc();
+            const end_token = self.next_token;
             _ = try self.require_token(.end);
 
-            const source_hash = self.include_stack.getLast().hash;
+            const src = self.include_stack.getLast();
+            const spans = src.tokens.items(.span);
+            const begin_ptr = spans[begin_token].ptr;
+
             const gop = try self.fragments.getOrPut(self.gpa, fragment);
             if (gop.found_existing) {
-                if (gop.value_ptr.source_hash != source_hash) {
-                    try self.include_stack.getLast().report_error(fragment_token, "Ignoring fragment definition; it has already been defined in another source file!");
-                } else if (gop.value_ptr.token != fragment_token) {
-                    try self.include_stack.getLast().report_error(fragment_token, "Ignoring fragment definition; it has already been defined in this source file!");
+                if (gop.value_ptr.content.ptr != begin_ptr) {
+                    try self.include_stack.getLast().report_error(fragment_token, "Ignoring fragment definition; it has already been defined elsewhere!");
                 }
             } else {
+                const begin_offset = @intFromPtr(begin_ptr) - @intFromPtr(src.source.ptr);
+                const end_offset = @intFromPtr(spans[end_token].ptr) - @intFromPtr(src.source.ptr);
                 gop.key_ptr.* = try self.gpa.dupe(u8, fragment);
                 gop.value_ptr.* = .{
-                    .source_hash = source_hash,
-                    .token = fragment_token,
-                    .first = begin,
-                    .len = end - begin,
+                    .content = src.source[begin_offset..end_offset],
+                    .first_instruction = begin,
+                    .instruction_count = end - begin,
                 };
             }
             return true;
