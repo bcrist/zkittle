@@ -1,6 +1,7 @@
 path: []const u8,
 source: []const u8,
 tokens: Token.List,
+hash: u64,
 
 const Source = @This();
 
@@ -12,11 +13,13 @@ pub fn init_buf(allocator: std.mem.Allocator, path: []const u8, source: []const 
     errdefer allocator.free(source_copy);
 
     const tokens = try Token.lex(allocator, source_copy);
+    const hash = std.hash.Wyhash.hash(0, source);
 
     return .{
         .path = path_copy,
         .source = source_copy,
         .tokens = tokens,
+        .hash = hash,
     };
 }
 
@@ -29,11 +32,13 @@ pub fn init_file(allocator: std.mem.Allocator, dir: std.fs.Dir, path: []const u8
     errdefer allocator.free(source);
 
     const tokens = try Token.lex(allocator, source);
+    const hash = std.hash.Wyhash.hash(0, source);
 
     return .{
         .path = realpath,
         .source = source,
         .tokens = tokens,
+        .hash = hash,
     };
 }
 

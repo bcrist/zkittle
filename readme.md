@@ -97,3 +97,9 @@ The name is pronounced like "skittle," not "zee kittle".
     The \\ @resource "whatever" // syntax works similarly to @include, but instead of interpreting
     the data returned by the callback as template source,
     it treats it as a raw literal to be printed.
+
+    Sometimes you may want to render only a part of a template in some cases.  To facilitate this,
+    you can define a \\ #fragment_name // to refer to part of the template, ending with the \\~//
+    operator.  This doesn't affect how the overall template is rendered, but allows you to access
+    the sub-template by name from code.  See https://htmx.org/essays/template-fragments/ for more
+    information about how this technique might be useful.

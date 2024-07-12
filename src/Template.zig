@@ -17,11 +17,6 @@ pub fn render(self: Template, writer: std.io.AnyWriter, obj: anytype, comptime o
 
 pub const max_stack_size = 31;
 
-pub const Instruction = struct {
-    op: Opcode,
-    data: Operands,
-};
-
 pub const Opcode = enum (u8) {
     print_literal, // literal_ref
     as_number,
@@ -118,11 +113,13 @@ pub fn get_static_instruction_data(self: *Template, allocator: std.mem.Allocator
     return buf;
 }
 
-pub fn init(allocator: std.mem.Allocator, instructions: std.MultiArrayList(Instruction), literal_data: []const u8) !Template {
-    const opcodes = try allocator.dupe(Opcode, instructions.items(.op));
+pub fn init(allocator: std.mem.Allocator, ops: []const Opcode, op_data: []const Operands, literal_data: []const u8) !Template {
+    std.debug.assert(ops.len == op_data.len);
+
+    const opcodes = try allocator.dupe(Opcode, ops);
     errdefer allocator.free(opcodes);
 
-    const operands = try allocator.dupe(Operands, instructions.items(.data));
+    const operands = try allocator.dupe(Operands, op_data);
     errdefer allocator.free(operands);
 
     const literal_data_copy = try allocator.dupe(u8, literal_data);
@@ -446,10 +443,10 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 const compare = variables[variable_sp - 2];
                 const new = variables[variable_sp - 1] + 1;
                 const offset = self.operands[pc].offset;
-                log.debug("{}: increment_and_retry_if_less: inc_var={} [{}] compare_var={} [{}], addr={}", .{ pc, variable_sp - 1, new, variable_sp - 2, compare, offset });
+                log.debug("{}: increment_and_retry_if_less: inc_var={} [{}] compare_var={} [{}], addr={}", .{ pc, variable_sp - 1, new, variable_sp - 2, compare, pc - offset });
                 variables[variable_sp - 1] = new;
                 if (new < compare) {
-                    pc = offset;
+                    pc -= offset;
                 } else {
                     pc += 1;
                 }

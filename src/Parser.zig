@@ -6,7 +6,8 @@ include_callback: *const fn (id: []const u8) anyerror!Source,
 /// N.B. The memory returned must remain stable and constant until the parse is complete!
 resource_callback: *const fn (id: []const u8) anyerror![]const u8,
 
-instructions: std.MultiArrayList(Template.Instruction) = .{},
+instructions: std.MultiArrayList(Instruction) = .{},
+fragments: std.StringArrayHashMapUnmanaged(Fragment) = .{},
 literal_data: std.ArrayListUnmanaged(u8) = .{},
 literal_dedup: std.StringHashMapUnmanaged(Template.Literal_Ref) = .{},
 ref_stack_depth: usize = 0,
@@ -17,10 +18,24 @@ token_kinds: []const Token.Kind = &.{},
 token_spans: []const []const u8 = &.{},
 next_token: usize = 0,
 
+const Instruction = struct {
+    op: Template.Opcode,
+    data: Template.Operands,
+};
+
+// A reference to a slice of the instructions array
+const Fragment = struct {
+    source_hash: u64,
+    token: usize,
+    first: usize,
+    len: usize,
+};
+
 const Parser = @This();
 
 pub fn deinit(self: *Parser) void {
     self.instructions.deinit(self.gpa);
+    self.fragments.deinit(self.gpa);
     self.literal_data.deinit(self.gpa);
     self.literal_dedup.deinit(self.gpa);
     self.include_stack.deinit(self.gpa);
@@ -55,11 +70,23 @@ pub fn append(self: *Parser, source: Source) anyerror!void {
     self.next_token = old_next;
 }
 
+pub fn get_fragment(self: *Parser, allocator: std.mem.Allocator, name: []const u8) !?Template {
+    if (self.fragments.get(name)) |frag| {
+        const ops = self.instructions.items(.op)[frag.first..][0..frag.len];
+        const data = self.instructions.items(.data)[frag.first..][0..frag.len];
+        return try Template.init(allocator, ops, data, self.literal_data.items);
+    }
+    return null;
+}
+
 pub fn finish(self: *Parser, allocator: std.mem.Allocator, clear_literal_data: bool) !Template {
-    const template = try Template.init(allocator, self.instructions, self.literal_data.items);
+    const ops = self.instructions.items(.op);
+    const data = self.instructions.items(.data);
+    const template = try Template.init(allocator, ops, data, self.literal_data.items);
 
     self.instructions.len = 0;
     self.ref_stack_depth = 0;
+    self.fragments.clearRetainingCapacity();
     
     if (clear_literal_data) {
         self.literal_data.clearRetainingCapacity();
@@ -98,6 +125,34 @@ fn parse_item(self: *Parser) !bool {
             }
             
             try self.add_literal_ref_instruction(.print_literal, literal_ref);
+            return true;
+        },
+        .fragment => {
+            self.next_token += 1;
+            const fragment_token = self.next_token;
+            const fragment = try self.require_id();
+            const begin = self.pc();
+            try self.parse_block();
+            const end = self.pc();
+            _ = try self.require_token(.end);
+
+            const source_hash = self.include_stack.getLast().hash;
+            const gop = try self.fragments.getOrPut(self.gpa, fragment);
+            if (gop.found_existing) {
+                if (gop.value_ptr.source_hash != source_hash) {
+                    try self.include_stack.getLast().report_error(fragment_token, "Ignoring fragment definition; it has already been defined in another source file!");
+                } else if (gop.value_ptr.token != fragment_token) {
+                    try self.include_stack.getLast().report_error(fragment_token, "Ignoring fragment definition; it has already been defined in this source file!");
+                }
+            } else {
+                gop.key_ptr.* = try self.gpa.dupe(u8, fragment);
+                gop.value_ptr.* = .{
+                    .source_hash = source_hash,
+                    .token = fragment_token,
+                    .first = begin,
+                    .len = end - begin,
+                };
+            }
             return true;
         },
         .kw_resource => {
@@ -183,7 +238,7 @@ fn parse_within(self: *Parser) !bool {
     try self.parse_block();
     try self.add_basic_instruction(.pop_ref);
 
-    try self.add_offset_instruction(.increment_and_retry_if_less, loop_begin_instruction);
+    try self.add_loop_instruction(.increment_and_retry_if_less, loop_begin_instruction);
     self.finalize_skip_instruction(skip_if_equal_instruction, self.pc());
     try self.add_basic_instruction(.end_loop);
     
@@ -252,8 +307,8 @@ fn parse_ref(self: *Parser) !bool {
     switch (self.token_kinds[self.next_token]) {
         .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_url,
         .condition, .within, .otherwise, .end, .child, .fallback, .alternative,
-        .kw_exists, .open_paren, .close_paren => return false,
-        .id, .number, .parent, .count, .self, .kw_index => {},
+        .kw_exists, .open_paren, .close_paren, .fragment => return false,
+        .id, .number, .parent, .kw_count, .self, .kw_index => {},
     }
 
     if (self.try_token(.self)) {
@@ -306,7 +361,7 @@ fn parse_field_or_index_or_count(self: *Parser) !bool {
         const index = try std.fmt.parseInt(usize, index_str, 10);
         try self.add_offset_instruction(.index, index);
 
-    } else if (self.try_token(.count)) {
+    } else if (self.try_token(.kw_count)) {
         try self.add_basic_instruction(.as_number);
         try self.add_basic_instruction(.number_to_ref);
 
@@ -413,6 +468,7 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !vo
         .pop_ref,
         .is_ref_nonnil,
         .push_nil,
+        .increment_and_retry_if_less, // offset
         => unreachable,
 
         .index, // offset
@@ -420,7 +476,6 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !vo
         .pop_and_skip_if_nonzero, // offset
         .skip, // offset
         .skip_if_equal, // offset
-        .increment_and_retry_if_less, // offset
         => {},
 
         .dupe_ref, // offset
@@ -429,6 +484,42 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: usize) !vo
     try self.instructions.append(self.gpa, .{
         .op = op,
         .data = .{ .offset = offset },
+    });
+}
+
+fn add_loop_instruction(self: *Parser, op: Template.Opcode, target_address: usize) !void {
+    switch (op) {
+        .print_literal, // literal_ref
+        .field, // literal_ref
+        .push_field, // literal_ref
+        .print_ref_raw,
+        .print_ref_escaped,
+        .print_ref_url,
+        .push_loop_index,
+        .as_number,
+        .number_to_ref,
+        .dupe_ref_0,
+        .index, // offset
+        .dupe_ref, // offset
+        .begin_loop,
+        .end_loop,
+        .dupe_ref_0_indexed,
+        .pop_ref,
+        .is_ref_nonnil,
+        .push_nil,
+        .skip_if_equal, // offset
+        .pop_and_skip_if_zero, // offset
+        .pop_and_skip_if_nonzero, // offset
+        .skip, // offset
+        => unreachable,
+
+        .increment_and_retry_if_less, // offset
+        => {},
+    }
+    const pc_delta = self.pc() - target_address;
+    try self.instructions.append(self.gpa, .{
+        .op = op,
+        .data = .{ .offset = pc_delta },
     });
 }
 

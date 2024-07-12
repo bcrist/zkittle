@@ -88,7 +88,7 @@ test "lexing" {
         \\otherwise:;
         \\end:~
         \\condition:?
-        \\count:#
+        \\fragment:#
         \\invalid:%
         \\fallback:|
         \\alternative:/
@@ -232,8 +232,12 @@ test "parsing" {
         \\
     );
 
-    try test_parse(
+    try test_invalid_parse(
         \\\\ #
+    );
+
+    try test_parse(
+        \\\\ @count
         ,
         \\dupe_ref_0
         \\as_number
@@ -254,7 +258,7 @@ test "parsing" {
     );
 
     try test_parse(
-        \\\\ @raw ax."something here".#.1.c
+        \\\\ @raw ax."something here".@count.1.c
         ,
         \\push_field: "ax"
         \\field: "something here"
@@ -267,7 +271,7 @@ test "parsing" {
     );
 
     try test_parse(
-        \\\\ @url ax."something here".#.1.c
+        \\\\ @url ax."something here".@count.1.c
         ,
         \\push_field: "ax"
         \\field: "something here"
@@ -422,11 +426,11 @@ test "parsing" {
         \\dupe_ref_0_indexed
         \\print_literal: "2\n"
         \\pop_ref
-        \\increment_and_retry_if_less: 8
+        \\increment_and_retry_if_less: 3
         \\end_loop
         \\print_literal: "3\n"
         \\pop_ref
-        \\increment_and_retry_if_less: 3
+        \\increment_and_retry_if_less: 12
         \\end_loop
         \\skip: 14
         \\end_loop
@@ -437,7 +441,7 @@ test "parsing" {
         \\dupe_ref_0_indexed
         \\print_literal: "5\n"
         \\pop_ref
-        \\increment_and_retry_if_less: 23
+        \\increment_and_retry_if_less: 3
         \\end_loop
         \\skip: 2
         \\end_loop
@@ -448,7 +452,7 @@ test "parsing" {
     );
 
     try test_parse(
-        \\\\ something: ^# ^^something.0 ~
+        \\\\ something: ^@count ^^something.0 ~
         ,
         \\push_field: "something"
         \\begin_loop
@@ -463,7 +467,7 @@ test "parsing" {
         \\index: 0
         \\print_ref_escaped
         \\pop_ref
-        \\increment_and_retry_if_less: 3
+        \\increment_and_retry_if_less: 10
         \\end_loop
         \\
     );
@@ -496,7 +500,7 @@ test "parsing" {
         \\print_ref_escaped
         \\print_literal: "\n"
         \\pop_ref
-        \\increment_and_retry_if_less: 3
+        \\increment_and_retry_if_less: 5
         \\end_loop
         \\
     );
@@ -653,6 +657,19 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
 
     try std.testing.expectEqualStrings(expected, temp.items);
 }
+fn test_invalid_parse(source_str: []const u8) !void {
+    var parser: Parser = .{
+        .gpa = std.testing.allocator,
+        .include_callback = test_include_callback,
+        .resource_callback = test_resource_callback,
+    };
+    defer parser.deinit();
+
+    var source = try Source.init_buf(std.testing.allocator, "source", source_str);
+    defer source.deinit(std.testing.allocator);
+
+    try std.testing.expectError(error.InvalidTemplate, parser.append(source));
+}
 
 test "render" {
     try test_template(
@@ -780,13 +797,47 @@ test "render" {
         \\1
     );
 
+    const template_with_frags = 
+        \\XYZ
+        \\\\ #some_fragment_name
+        \\a b c
+        \\\\ a
+        \\\\ #another_fragment
+        \\a;sldkfj
+        \\\\~
+        \\asdf
+        \\\\ ~
+        ;
+
+    try test_template(template_with_frags, .{ .a = "1234" },
+        \\XYZ
+        \\a b c
+        \\1234a;sldkfj
+        \\asdf
+        \\
+    );
+
+    try test_template_fragment(template_with_frags, .{ .a = "1234" }, "some_fragment_name",
+        \\a b c
+        \\1234a;sldkfj
+        \\asdf
+        \\
+    );
+
+    try test_template_fragment(template_with_frags, .{ .a = "1234" }, "another_fragment",
+        \\a;sldkfj
+        \\
+    );
 }
 
 fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !void {
-    try test_template_alloc(std.heap.page_allocator, source_str, value, expected);
+    try test_template_alloc(std.heap.page_allocator, source_str, null, value, expected);
+}
+fn test_template_fragment(source_str: []const u8, value: anytype, fragment: []const u8, expected: []const u8) !void {
+    try test_template_alloc(std.heap.page_allocator, source_str, fragment, value, expected);
 }
 
-fn test_template_alloc(allocator: std.mem.Allocator, source_str: []const u8, value: anytype, expected: []const u8) !void {
+fn test_template_alloc(allocator: std.mem.Allocator, source_str: []const u8, fragment: ?[]const u8, value: anytype, expected: []const u8) !void {
     var parser: Parser = .{
         .gpa = allocator,
         .include_callback = test_include_callback,
@@ -799,7 +850,7 @@ fn test_template_alloc(allocator: std.mem.Allocator, source_str: []const u8, val
 
     try parser.append(source);
 
-    var template = try parser.finish(allocator, true);
+    var template = if (fragment) |name| try parser.get_fragment(allocator, name) orelse return error.FragmentNotFound else try parser.finish(allocator, true);
     defer template.deinit(allocator);
 
     var temp = std.ArrayList(u8).init(allocator);

@@ -19,13 +19,14 @@ pub const Kind = enum (u8) {
     kw_index,
     kw_exists,
     kw_url,
+    kw_count,
     condition,   // ?
     within,      // :
     otherwise,   // ;
     end,         // ~
     parent,      // ^
     child,       // .
-    count,       // #
+    fragment,    // #
     self,        // *
     fallback,    // |
     alternative, // /
@@ -133,7 +134,7 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                     i += 1;
                 },
                 '#' => {
-                    try tokens.append(allocator, .{ .kind = .count, .span = remaining[i .. i + 1] });
+                    try tokens.append(allocator, .{ .kind = .fragment, .span = remaining[i .. i + 1] });
                     i += 1;
                 },
                 '*' => {
@@ -172,6 +173,8 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                         try tokens.append(allocator, .{ .kind = .kw_exists, .span = token });
                     } else if (std.mem.eql(u8, token, "@url")) {
                         try tokens.append(allocator, .{ .kind = .kw_url, .span = token });
+                    } else if (std.mem.eql(u8, token, "@count")) {
+                        try tokens.append(allocator, .{ .kind = .kw_count, .span = token });
                     } else {
                         try tokens.append(allocator, .{ .kind = .invalid, .span = token });
                     }
@@ -197,11 +200,11 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                 },
             }
         } else {
-            remaining = "";
+            remaining = remaining[remaining.len..];
         }
     }
 
-    try tokens.append(allocator, .{ .kind = .eof, .span = "" });
+    try tokens.append(allocator, .{ .kind = .eof, .span = remaining[remaining.len..] });
 
     return tokens;
 }
