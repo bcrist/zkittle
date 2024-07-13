@@ -169,7 +169,7 @@ fn parse_item(self: *Parser) !bool {
             } else {
                 const begin_offset = @intFromPtr(begin_ptr) - @intFromPtr(src.source.ptr);
                 const end_offset = @intFromPtr(spans[end_token].ptr) - @intFromPtr(src.source.ptr);
-                gop.key_ptr.* = try self.gpa.dupe(u8, fragment);
+                gop.key_ptr.* = fragment;
                 gop.value_ptr.* = .{
                     .content = src.source[begin_offset..end_offset],
                     .first_instruction = begin,
