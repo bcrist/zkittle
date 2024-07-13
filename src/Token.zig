@@ -8,8 +8,8 @@ const Token = @This();
 pub const List = std.MultiArrayList(Token);
 
 pub const Kind = enum (u8) {
+    eof = 0,
     invalid,
-    eof,
     literal,
     id,
     number,
