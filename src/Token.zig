@@ -5,7 +5,22 @@ const min_interned_literal_length = 15;
 
 const Token = @This();
 
-pub const List = std.MultiArrayList(Token);
+pub const List = struct {
+    kinds: []const Kind,
+    spans: [*]const []const u8,
+
+    pub fn deinit(self: List, allocator: std.mem.Allocator) void {
+        allocator.free(self.spans[0..self.kinds.len]);
+        allocator.free(self.kinds);
+    }
+
+    pub fn get(self: List, token: usize) Token {
+        return .{
+            .kind = self.kinds[token],
+            .span = self.spans[token],
+        };
+    }
+};
 
 pub const Kind = enum (u8) {
     eof = 0,
@@ -34,10 +49,12 @@ pub const Kind = enum (u8) {
     close_paren, // )
 };
 
-
 pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
-    var tokens: List = .{};
-    try tokens.setCapacity(allocator, text.len / 2 + 100);
+    const initial_capacity = text.len / 2 + 100;
+    var kinds = try std.ArrayList(Kind).initCapacity(allocator, initial_capacity);
+    defer kinds.deinit();
+    var spans = try std.ArrayList([]const u8).initCapacity(allocator, initial_capacity);
+    defer kinds.deinit();
 
     var remaining = text;
     while (remaining.len > 0) {
@@ -51,13 +68,13 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                 const prefix_len = search_start - literal_start;
                 const remaining_len = literal.len - search_start;
                 if (prefix_len > min_interned_literal_length and remaining_len > min_interned_literal_length) {
-                    try tokens.append(allocator, .{ .kind = .literal, .span = literal[literal_start..search_start] });
+                    try append(&kinds, &spans, .literal, literal[literal_start..search_start]);
                     literal_start = search_start;
                 }
             }
 
             if (literal_start < literal.len) {
-                try tokens.append(allocator, .{ .kind = .literal, .span = literal[literal_start..] });
+                try append(&kinds, &spans, .literal, literal[literal_start..]);
             }
         }
         remaining = remaining[@min(remaining.len, literal.len + 2)..];
@@ -78,7 +95,7 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                         '0'...'9' => j += 1,
                         else => break,
                     };
-                    try tokens.append(allocator, .{ .kind = .number, .span = remaining[i..j] });
+                    try append(&kinds, &spans, .number, remaining[i..j]);
                     i = j;
                 },
 
@@ -88,14 +105,14 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                         'a'...'z', 'A'...'Z', '0'...'9', '_' => j += 1,
                         else => break,
                     };
-                    try tokens.append(allocator, .{ .kind = .id, .span = remaining[i..j] });
+                    try append(&kinds, &spans, .id, remaining[i..j]);
                     i = j;
                 },
 
                 '"' => {
                     const start = i + 1;
                     const end = std.mem.indexOfScalarPos(u8, remaining, i + 1, '"') orelse remaining.len;
-                    try tokens.append(allocator, .{ .kind = .id, .span = remaining[start..end] });
+                    try append(&kinds, &spans, .id, remaining[start..end]);
                     i = @min(remaining.len, end + 1);
                 },
 
@@ -104,53 +121,53 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                         remaining = remaining[i + 2 ..];
                         break;
                     } else {
-                        try tokens.append(allocator, .{ .kind = .alternative, .span = remaining[i .. i + 1] });
+                        try append(&kinds, &spans, .alternative, remaining[i .. i + 1]);
                         i += 1;
                     }
                 },
 
                 '?' => {
-                    try tokens.append(allocator, .{ .kind = .condition, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .condition, remaining[i .. i + 1]);
                     i += 1;
                 },
                 ':' => {
-                    try tokens.append(allocator, .{ .kind = .within, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .within, remaining[i .. i + 1]);
                     i += 1;
                 },
                 ';' => {
-                    try tokens.append(allocator, .{ .kind = .otherwise, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .otherwise, remaining[i .. i + 1]);
                     i += 1;
                 },
                 '~' => {
-                    try tokens.append(allocator, .{ .kind = .end, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .end, remaining[i .. i + 1]);
                     i += 1;
                 },
                 '^' => {
-                    try tokens.append(allocator, .{ .kind = .parent, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .parent, remaining[i .. i + 1]);
                     i += 1;
                 },
                 '.' => {
-                    try tokens.append(allocator, .{ .kind = .child, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .child, remaining[i .. i + 1]);
                     i += 1;
                 },
                 '#' => {
-                    try tokens.append(allocator, .{ .kind = .fragment, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .fragment, remaining[i .. i + 1]);
                     i += 1;
                 },
                 '*' => {
-                    try tokens.append(allocator, .{ .kind = .self, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .self, remaining[i .. i + 1]);
                     i += 1;
                 },
                 '|' => {
-                    try tokens.append(allocator, .{ .kind = .fallback, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .fallback, remaining[i .. i + 1]);
                     i += 1;
                 },
                 '(' => {
-                    try tokens.append(allocator, .{ .kind = .open_paren, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .open_paren, remaining[i .. i + 1]);
                     i += 1;
                 },
                 ')' => {
-                    try tokens.append(allocator, .{ .kind = .close_paren, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .close_paren, remaining[i .. i + 1]);
                     i += 1;
                 },
 
@@ -162,21 +179,21 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                     };
                     const token = remaining[i..j];
                     if (std.mem.eql(u8, token, "@resource")) {
-                        try tokens.append(allocator, .{ .kind = .kw_resource, .span = token });
+                        try append(&kinds, &spans, .kw_resource, token);
                     } else if (std.mem.eql(u8, token, "@include")) {
-                        try tokens.append(allocator, .{ .kind = .kw_include, .span = token });
+                        try append(&kinds, &spans, .kw_include, token);
                     } else if (std.mem.eql(u8, token, "@raw")) {
-                        try tokens.append(allocator, .{ .kind = .kw_raw, .span = token });
+                        try append(&kinds, &spans, .kw_raw, token);
                     } else if (std.mem.eql(u8, token, "@index")) {
-                        try tokens.append(allocator, .{ .kind = .kw_index, .span = token });
+                        try append(&kinds, &spans, .kw_index, token);
                     } else if (std.mem.eql(u8, token, "@exists")) {
-                        try tokens.append(allocator, .{ .kind = .kw_exists, .span = token });
+                        try append(&kinds, &spans, .kw_exists, token);
                     } else if (std.mem.eql(u8, token, "@url")) {
-                        try tokens.append(allocator, .{ .kind = .kw_url, .span = token });
+                        try append(&kinds, &spans, .kw_url, token);
                     } else if (std.mem.eql(u8, token, "@count")) {
-                        try tokens.append(allocator, .{ .kind = .kw_count, .span = token });
+                        try append(&kinds, &spans, .kw_count, token);
                     } else {
-                        try tokens.append(allocator, .{ .kind = .invalid, .span = token });
+                        try append(&kinds, &spans, .invalid, token);
                     }
                     i = j;
                 },
@@ -195,7 +212,7 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                 },
 
                 else => {
-                    try tokens.append(allocator, .{ .kind = .invalid, .span = remaining[i .. i + 1] });
+                    try append(&kinds, &spans, .invalid, remaining[i .. i + 1]);
                     i += 1;
                 },
             }
@@ -204,9 +221,27 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
         }
     }
 
-    try tokens.append(allocator, .{ .kind = .eof, .span = remaining[remaining.len..] });
+    try append(&kinds, &spans, .eof, remaining[remaining.len..]);
 
-    return tokens;
+    std.debug.assert(kinds.items.len == spans.items.len);
+
+    const final_kinds = try kinds.toOwnedSlice();
+    errdefer allocator.free(final_kinds);
+
+    const final_spans = try spans.toOwnedSlice();
+
+    return .{
+        .kinds = final_kinds,
+        .spans = final_spans.ptr,
+    };
+}
+
+fn append(kinds: *std.ArrayList(Kind), spans: *std.ArrayList([]const u8), kind: Kind, span: []const u8) !void {
+    try kinds.ensureUnusedCapacity(1);
+    try spans.ensureUnusedCapacity(1);
+    std.debug.assert(kinds.items.len == spans.items.len);
+    kinds.appendAssumeCapacity(kind);
+    spans.appendAssumeCapacity(span);
 }
 
 const std = @import("std");

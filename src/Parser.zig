@@ -17,7 +17,7 @@ ref_stack_depth: u32 = 0,
 include_stack: std.ArrayListUnmanaged(Source) = .{},
 
 token_kinds: []const Token.Kind = &.{},
-token_spans: []const []const u8 = &.{},
+token_spans: [*]const []const u8 = @as([]const []const u8, &.{}).ptr,
 next_token: usize = 0,
 
 const Instruction = struct {
@@ -70,8 +70,8 @@ pub fn append(self: *Parser, source: Source) anyerror!void {
     }
 
     try self.include_stack.append(self.gpa, source);
-    self.token_kinds = source.tokens.items(.kind);
-    self.token_spans = source.tokens.items(.span);
+    self.token_kinds = source.tokens.kinds;
+    self.token_spans = source.tokens.spans;
     self.next_token = 0;
 
     try self.parse_block();
@@ -83,8 +83,8 @@ pub fn append(self: *Parser, source: Source) anyerror!void {
 
     _ = self.include_stack.pop();
     if (self.include_stack.getLastOrNull()) |s| {
-        self.token_kinds = s.tokens.items(.kind);
-        self.token_spans = s.tokens.items(.span);
+        self.token_kinds = s.tokens.kinds;
+        self.token_spans = s.tokens.spans;
     }
     self.next_token = old_next;
 }
@@ -157,8 +157,7 @@ fn parse_item(self: *Parser) !bool {
             const end_token = self.next_token;
             _ = try self.require_token(.end);
 
-            const src = self.include_stack.getLast();
-            const spans = src.tokens.items(.span);
+            const spans = self.token_spans;
             const begin_ptr = spans[begin_token].ptr;
 
             const gop = try self.fragments.getOrPut(self.gpa, fragment);
@@ -167,11 +166,12 @@ fn parse_item(self: *Parser) !bool {
                     try self.include_stack.getLast().report_error(fragment_token, "Ignoring fragment definition; it has already been defined elsewhere!");
                 }
             } else {
-                const begin_offset = @intFromPtr(begin_ptr) - @intFromPtr(src.source.ptr);
-                const end_offset = @intFromPtr(spans[end_token].ptr) - @intFromPtr(src.source.ptr);
+                const src = self.include_stack.getLast().source;
+                const begin_offset = @intFromPtr(begin_ptr) - @intFromPtr(src.ptr);
+                const end_offset = @intFromPtr(spans[end_token].ptr) - @intFromPtr(src.ptr);
                 gop.key_ptr.* = fragment;
                 gop.value_ptr.* = .{
-                    .content = src.source[begin_offset..end_offset],
+                    .content = src[begin_offset..end_offset],
                     .first_instruction = begin,
                     .instruction_count = end - begin,
                 };

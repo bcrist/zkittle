@@ -171,7 +171,7 @@ fn test_lex(src: []const u8, expected: []const u8) !void {
     var temp = std.ArrayList(u8).init(std.testing.allocator);
     defer temp.deinit();
 
-    for (tokens.items(.kind), tokens.items(.span)) |kind, span| {
+    for (tokens.kinds, tokens.spans) |kind, span| {
         try temp.writer().print("{s}:{}\n", .{ @tagName(kind), std.zig.fmtEscapes(span) });
     }
 

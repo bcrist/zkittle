@@ -44,7 +44,7 @@ pub fn deinit(self: *Source, allocator: std.mem.Allocator) void {
 }
 
 pub fn report_error(self: Source, token: usize, desc: []const u8) !void {
-    const span = self.tokens.items(.span)[token];
+    const span = self.tokens.spans[token];
     try console.print_context(self.source, &.{
         .{
             .offset = @intFromPtr(span.ptr) - @intFromPtr(self.source.ptr),
