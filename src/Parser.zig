@@ -150,7 +150,6 @@ fn parse_item(self: *Parser) !bool {
             self.next_token += 1;
             const fragment_token = self.next_token;
             const fragment = try self.require_id();
-            const begin_token = self.next_token;
             const begin = self.pc();
             try self.parse_block();
             const end = self.pc();
@@ -158,7 +157,8 @@ fn parse_item(self: *Parser) !bool {
             _ = try self.require_token(.end);
 
             const spans = self.token_spans;
-            const begin_ptr = spans[begin_token].ptr;
+            const fragment_span = spans[fragment_token];
+            const begin_ptr = fragment_span[fragment_span.len..].ptr;
 
             const gop = try self.fragments.getOrPut(self.gpa, fragment);
             if (gop.found_existing) {
