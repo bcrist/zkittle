@@ -44,7 +44,7 @@ The name is pronounced like "skittle," not "zee kittle".
 
     Identifiers that aren't qualified by '^' can reference a field in the current context, or the first
     parent context that has a non-nil value for the field.  This is useful because sometimes a template
-    is designed to be imported, but you don't know if it will be inside a "within" expression.  You can
+    is designed to be imported, but you don't know if it will be inside a "within" block.  You can
     explicitly search only the current context by using \\*.field// instead of \\field//.
 
     You can "push" a new data context with the ':' operator (a.k.a "within").
@@ -62,12 +62,12 @@ The name is pronounced like "skittle," not "zee kittle".
     Note that the sequence does not end at the end of the command block, so that it can include
     literal text easily.  Instead, the ~ character ends the region.
 
-    When the data selected by a "within" expression is a collection, the sequence will be evaluated once
+    When the data selected by a "within" block is a collection, the sequence will be evaluated once
     for each item in the collection.  You can print the current index with the \\@index// syntax.  When
     not inside a "within" region, nothing will be output.  You can access the entire collection
     instead of an individual item with \\ ^* //.  You can access the "outer" data context with \\ ^^* //.
-    (note this also works when the within expression isn't a collection)
-    If you have nested "within" expressions, the '^' prefixes can be chained as needed.
+    (note this also works when the within block isn't a collection)
+    If you have nested "within" blocks, the '^' prefixes can be chained as needed.
 
     The conditional '?' operator only evaluates its subsequent region when its data value is "truthy,"
     but it does not push a new data context:
@@ -83,11 +83,34 @@ The name is pronounced like "skittle," not "zee kittle".
     expression, while the latter always just prints x or y.  Similarly \\x | y// is corresponds to
     \\x.@exists? x ; y ~// in the same way.
 
+    Application-specific extensions can be added by adding functions to the data context.  These
+    functions will be passed the writer, escape functions, and the root data context, as well as
+    a list of any parameters from the template.  Calling a function from a template looks like
+    this: \\ :my_func param1 param2 param3 //  Note that ":" is used for both function calls and
+    "within" blocks.  In order to be treated as a function call, it must be followed immediately
+    by a non-whitespace character.
+
     By default all strings will be printed with an HTML escape function.
     This can be overridden or disabled in code when generating other types of documents.
     You can also disable it for a specific expression with \\ @raw some_value //.
     An alternative escaping function can be used for specific expressions with \\ @url some_value //.
     By default, this will escape using percent encoding; suitable for embedding arbitrary data in URLs.
+
+    Within command blocks, you can use string literals, wrapped in double quotes, anywhere an
+    expression is expected.  Note that no escape sequences are supported; the string literal simply
+    ends as soon as the next double quote is seen, so string literals can never contain a double
+    quote.  Often string literals are functionally equivalent to closing the command block and
+    opening another immediately after:
+    \\ "Hellorld!"  //Hellorld!\\
+    \\ $ but string literals also let you do things like:
+    \\ @raw "<table>" $ prevent escaping of HTML tags
+    \\ :func "asdf" $ pass literals to a function
+
+    String literals can also be used to access fields with names that aren't valid zkittle identifiers.
+    This only works when used after the "." or `^` operators:
+    \\ something."has weird fields"."and even recursive ones"
+    \\ *."I am in the current context"
+    \\ ^^"I'm in the parent context"
 
     The \\ @include "path/to/template" // syntax can be used to pull the entire content of another
     template into the current one.

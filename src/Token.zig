@@ -27,6 +27,7 @@ pub const Kind = enum (u8) {
     invalid,
     literal,
     id,
+    string_literal,
     number,
     kw_resource,
     kw_include,
@@ -35,18 +36,19 @@ pub const Kind = enum (u8) {
     kw_exists,
     kw_url,
     kw_count,
-    condition,   // ?
-    within,      // :
-    otherwise,   // ;
-    end,         // ~
-    parent,      // ^
-    child,       // .
-    fragment,    // #
-    self,        // *
-    fallback,    // |
-    alternative, // /
-    open_paren,  // (
-    close_paren, // )
+    condition,      // ?
+    within,         // : (when followed by whitespace or end of command block)
+    fn_call,        // : (when not followed by whitespace or end of command block)
+    otherwise,      // ;
+    end,            // ~
+    parent,         // ^
+    child,          // .
+    fragment,       // #
+    self,           // *
+    fallback,       // |
+    alternative,    // /
+    open_paren,     // (
+    close_paren,    // )
 };
 
 pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
@@ -112,7 +114,7 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                 '"' => {
                     const start = i + 1;
                     const end = std.mem.indexOfScalarPos(u8, remaining, i + 1, '"') orelse remaining.len;
-                    try append(&kinds, &spans, .id, remaining[start..end]);
+                    try append(&kinds, &spans, .string_literal, remaining[start..end]);
                     i = @min(remaining.len, end + 1);
                 },
 
@@ -131,7 +133,11 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                     i += 1;
                 },
                 ':' => {
-                    try append(&kinds, &spans, .within, remaining[i .. i + 1]);
+                    if (remaining.len > i + 1 and remaining[i + 1] > ' ') {
+                        try append(&kinds, &spans, .fn_call, remaining[i .. i + 1]);
+                    } else {
+                        try append(&kinds, &spans, .within, remaining[i .. i + 1]);
+                    }
                     i += 1;
                 },
                 ';' => {

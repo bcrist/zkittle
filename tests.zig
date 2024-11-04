@@ -78,7 +78,7 @@ test "lexing" {
         \\
     );
     try test_lex(
-        \\\\ ^ a . b :;~?#%|/
+        \\\\ ^ a . b : ;~?#%|/
         ,
         \\parent:^
         \\id:a
@@ -129,7 +129,16 @@ test "lexing" {
     try test_lex(
         \\\\ "a b c"
         ,
-        \\id:a b c
+        \\string_literal:a b c
+        \\eof:
+        \\
+    );
+        try test_lex(
+        \\\\ *."a b c"
+        ,
+        \\self:*
+        \\child:.
+        \\string_literal:a b c
         \\eof:
         \\
     );
@@ -159,6 +168,16 @@ test "lexing" {
         \\close_paren:)
         \\child:.
         \\id:d
+        \\eof:
+        \\
+    );
+
+    try test_lex(
+        \\\\abc:def
+        ,
+        \\id:abc
+        \\fn_call::
+        \\id:def
         \\eof:
         \\
     );
@@ -597,6 +616,61 @@ test "parsing" {
         \\print_literal_var_len: 0
         \\
     );
+
+    try test_parse(
+        \\\\:func 
+        ,
+        \\push_field: "func"
+        \\call_func: 0
+        \\
+    );
+    try test_parse(
+        \\\\:(a|b) param1 param2
+        ,
+        \\push_field: "a"
+        \\dupe_ref_0
+        \\is_ref_nonnil
+        \\as_number
+        \\pop_and_skip_if_nonzero: 2
+        \\pop_ref
+        \\push_field: "b"
+        \\dupe_ref: 1
+        \\field: "param1"
+        \\dupe_ref: 2
+        \\field: "param2"
+        \\call_func: 2
+        \\
+    );
+    try test_parse(
+        \\\\:func @index * @index a."asdf"
+        ,
+        \\push_field: "func"
+        \\push_loop_index
+        \\dupe_ref: 2
+        \\push_loop_index
+        \\dupe_ref: 4
+        \\field: "a"
+        \\field: "asdf"
+        \\call_func: 4
+        \\
+    );
+    try test_parse(
+        \\\\each: :func @index xyz ~
+        ,
+        \\push_field: "each"
+        \\begin_loop
+        \\skip_if_equal: 8
+        \\dupe_ref_0_indexed
+        \\push_field: "func"
+        \\push_loop_index
+        \\dupe_ref: 2
+        \\field: "xyz"
+        \\call_func: 2
+        \\pop_ref
+        \\increment_and_retry_if_less: 7
+        \\end_loop
+        \\
+    );
 }
 
 var test_include: ?Source = null;
@@ -649,14 +723,14 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
         const operands = template.operands[i];
         try writer.writeAll(@tagName(opcode));
         switch (opcode) {
-            .print_literal, .field, .push_field => {
+            .push_literal, .print_literal, .field, .push_field => {
                 const ref = operands.literal_ref();
                 const span = template.literal_data[ref.offset..][0..ref.length];
                 try writer.print(": \"{}\"", .{ std.zig.fmtEscapes(span) });
             },
-            .print_literal_var_len, .field_var_len, .push_field_var_len,
+            .push_literal_var_len, .print_literal_var_len, .field_var_len, .push_field_var_len,
             .skip_if_equal, .increment_and_retry_if_less,
-            .index, .dupe_ref, .skip, .push_var,
+            .index, .dupe_ref, .skip, .push_var, .call_func,
             .pop_and_skip_if_zero, .pop_and_skip_if_nonzero => {
                 try writer.print(": {}", .{ operands.offset });
             },
@@ -811,6 +885,53 @@ test "render" {
         \\1
     );
 
+    try test_template(
+        \\\\ "asdf".len
+        , .{},
+        \\4
+    );
+    try test_template(
+        \\\\ asdf.len
+        , .{ .asdf = "12" },
+        \\2
+    );
+
+    try test_template(
+        \\\\ @count
+        , .{ .asdf = "12", .jkl = "34" },
+        \\1
+    );
+
+    try test_template(
+        \\\\ :func
+        , .{ .func = &print_ok },
+        \\ok
+    );
+
+    try test_template(
+        \\\\ :func "ignored param"
+        , (struct { pub const zk_func = print_ok; }) {},
+        \\ok
+    );
+
+    try test_template(
+        \\\\ :func "a" "b" a
+        , .{ .a = "Hellorld!", .func = &print_args },
+        \\abHellorld!
+    );
+
+    try test_template(
+        \\\\items: :func * * ~
+        , .{ .items = &.{ "Hello", "World!" }, .func = &print_args },
+        \\HelloHelloWorld!World!
+    );
+
+    try test_template(
+        \\\\items: :func len ~
+        , .{ .items = &.{ "Hello", "World!" }, .func = &print_args },
+        \\56
+    );
+
     const template_with_frags = 
         \\XYZ
         \\\\ #some_fragment_name
@@ -844,6 +965,23 @@ test "render" {
     );
 }
 
+fn print_ok(root_ref: Template.Ref, args: []const Template.Ref, writer: std.io.AnyWriter, escape_fn: *const Template.escape.Fn, url_fn: *const Template.escape.Fn) anyerror!void {
+    _ = root_ref;
+    _ = args;
+    _ = escape_fn;
+    _ = url_fn;
+    try writer.writeAll("ok");
+}
+
+fn print_args(root_ref: Template.Ref, args: []const Template.Ref, writer: std.io.AnyWriter, escape_fn: *const Template.escape.Fn, url_fn: *const Template.escape.Fn) anyerror!void {
+    _ = root_ref;
+    _ = escape_fn;
+    _ = url_fn;
+    for (args) |ref| {
+        try Template.print_ref(ref, writer, null);
+    }
+}
+
 fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !void {
     try test_template_alloc(std.heap.page_allocator, source_str, null, value, expected);
 }
@@ -873,14 +1011,6 @@ fn test_template_alloc(allocator: std.mem.Allocator, source_str: []const u8, fra
     const writer = temp.writer();
     try template.render(writer.any(), value, .{});
     try std.testing.expectEqualStrings(expected, temp.items);
-}
-
-pub fn main() !void {
-    try test_template(
-        \\\\ @index | index
-        , .{ .index = 5 },
-        \\5
-    );
 }
 
 const Template = @import("src/Template.zig");

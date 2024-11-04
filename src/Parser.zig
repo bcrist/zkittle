@@ -1,5 +1,6 @@
 gpa: std.mem.Allocator,
 
+/// Not used internally, but allows passing extra data at parse time to include_callback or resource_callback without needing to resort to globals or thread locals
 callback_context: ?*anyopaque = null,
 
 /// N.B. The memory referenced by the returned source must remain stable and constant until the parse is complete!
@@ -13,6 +14,7 @@ fragments: std.StringArrayHashMapUnmanaged(Fragment) = .{},
 literal_data: std.ArrayListUnmanaged(u8) = .{},
 literal_dedup: std.StringHashMapUnmanaged(Literal_Ref) = .{},
 ref_stack_depth: u32 = 0,
+reserved_stack_slots: u32 = 0,
 
 include_stack: std.ArrayListUnmanaged(Source) = .{},
 
@@ -105,6 +107,7 @@ pub fn finish(self: *Parser, allocator: std.mem.Allocator, clear_literal_data: b
 
     self.instructions.len = 0;
     self.ref_stack_depth = 0;
+    self.reserved_stack_slots = 0;
     self.fragments.clearRetainingCapacity();
     
     if (clear_literal_data) {
@@ -149,7 +152,7 @@ fn parse_item(self: *Parser) !bool {
         .fragment => {
             self.next_token += 1;
             const fragment_token = self.next_token;
-            const fragment = try self.require_id();
+            const fragment = try self.require_id_or_string_literal();
             const begin = self.pc();
             try self.parse_block();
             const end = self.pc();
@@ -180,7 +183,7 @@ fn parse_item(self: *Parser) !bool {
         },
         .kw_resource => {
             self.next_token += 1;
-            const id = try self.require_id();
+            const id = try self.require_id_or_string_literal();
             if (self.resource_callback(self, id)) |literal| {
                 try self.add_print_literal_instruction(literal);
             } else |err| {
@@ -190,7 +193,7 @@ fn parse_item(self: *Parser) !bool {
         },
         .kw_include => {
             self.next_token += 1;
-            const id = try self.require_id();
+            const id = try self.require_id_or_string_literal();
             if (self.include_callback(self, id)) |source| {
                 try self.append(source);
             } else |err| {
@@ -213,6 +216,22 @@ fn parse_item(self: *Parser) !bool {
                 try self.add_basic_instruction(.print_ref_url);
             } else {
                 try self.include_stack.getLast().report_error(self.next_token, "Expected value reference");
+            }
+            return true;
+        },
+        .fn_call => {
+            self.next_token += 1;
+            if (try self.parse_expression()) {
+                self.reserved_stack_slots += 1;
+                var num_params: u32 = 0;
+                while (try self.parse_expression()) {
+                    self.reserved_stack_slots += 1;
+                    num_params += 1;
+                }
+                try self.add_offset_instruction(.call_func, num_params);
+                self.reserved_stack_slots -= num_params + 1;
+            } else {
+                try self.include_stack.getLast().report_error(self.next_token, "Expected function reference");
             }
             return true;
         },
@@ -330,12 +349,16 @@ fn parse_ref(self: *Parser) !bool {
     switch (self.token_kinds[self.next_token]) {
         .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_url,
         .condition, .within, .otherwise, .end, .child, .fallback, .alternative,
-        .kw_exists, .open_paren, .close_paren, .fragment => return false,
-        .id, .number, .parent, .kw_count, .self, .kw_index => {},
+        .kw_exists, .open_paren, .close_paren, .fragment, .fn_call => return false,
+        .id, .number, .parent, .kw_count, .self, .kw_index, .string_literal => {},
     }
 
     if (self.try_token(.self)) {
-        try self.add_basic_instruction(.dupe_ref_0);
+        if (self.reserved_stack_slots > 0) {
+            try self.add_offset_instruction(.dupe_ref, self.reserved_stack_slots);
+        } else {
+            try self.add_basic_instruction(.dupe_ref_0);
+        }
         return true;
     } else if (self.try_token(.kw_index)) {
         try self.add_basic_instruction(.push_loop_index);
@@ -347,26 +370,38 @@ fn parse_ref(self: *Parser) !bool {
 
     if (parent_count == 0) {
         if (self.try_id()) |field_name| {
-            try self.add_literal_instruction(.push_field, field_name);
+            if (self.reserved_stack_slots > 0) {
+                try self.add_offset_instruction(.dupe_ref, self.reserved_stack_slots);
+                try self.add_literal_instruction(.field, field_name);
+            } else {
+                try self.add_literal_instruction(.push_field, field_name);
+            }
+            return true;
+        } else if (self.try_string_literal()) |literal| {
+            try self.add_literal_instruction(.push_literal, literal);
+            return true;
+        } else {
+            if (self.reserved_stack_slots > 0) {
+                try self.add_offset_instruction(.dupe_ref, self.reserved_stack_slots);
+            } else {
+                try self.add_basic_instruction(.dupe_ref_0);
+            }
+            if (!try self.parse_field_or_index_or_count()) {
+                try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, or '#'");
+                return error.InvalidTemplate;
+            }
             return true;
         }
-
-        try self.add_basic_instruction(.dupe_ref_0);
-        if (!try self.parse_field_or_index_or_count()) {
-            try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, or '#'");
-            return error.InvalidTemplate;
-        }
-        return true;
     }
 
-    if (parent_count > self.ref_stack_depth) {
+    if (parent_count + self.reserved_stack_slots > self.ref_stack_depth) {
         var buf: [128]u8 = undefined;
         const msg = try std.fmt.bufPrint(&buf, "Not enough parent data contexts; only {} exist", .{ self.ref_stack_depth });
         try self.include_stack.getLast().report_error(self.next_token - 1, msg);
-        parent_count = self.ref_stack_depth;
+        parent_count = self.ref_stack_depth - self.reserved_stack_slots;
     }
 
-    try self.add_offset_instruction(.dupe_ref, parent_count);
+    try self.add_offset_instruction(.dupe_ref, parent_count + self.reserved_stack_slots);
     if (!try self.parse_field_or_index_or_count()) {
         try self.include_stack.getLast().report_error(self.next_token, "Expected field name, index, or '#'");
         return error.InvalidTemplate;
@@ -377,6 +412,9 @@ fn parse_ref(self: *Parser) !bool {
 
 fn parse_field_or_index_or_count(self: *Parser) !bool {
     if (self.try_id()) |field_name| {
+        try self.add_literal_instruction(.field, field_name);
+
+    } else if (self.try_string_literal()) |field_name| {
         try self.add_literal_instruction(.field, field_name);
 
     } else if (self.try_token(.number)) {
@@ -403,6 +441,15 @@ fn try_id(self: *Parser) ?[]const u8 {
     return null;
 }
 
+fn try_string_literal(self: *Parser) ?[]const u8 {
+    if (self.token_kinds[self.next_token] == .string_literal) {
+        const span = self.token_spans[self.next_token];
+        self.next_token += 1;
+        return span;
+    }
+    return null;
+}
+
 fn try_token(self: *Parser, kind: Token.Kind) bool {
     if (self.token_kinds[self.next_token] == kind) {
         self.next_token += 1;
@@ -411,9 +458,10 @@ fn try_token(self: *Parser, kind: Token.Kind) bool {
     return false;
 }
 
-fn require_id(self: *Parser) ![]const u8 {
+fn require_id_or_string_literal(self: *Parser) ![]const u8 {
     if (self.try_id()) |span| return span;
-    try self.include_stack.getLast().report_error(self.next_token, "Expected id");
+    if (self.try_string_literal()) |span| return span;
+    try self.include_stack.getLast().report_error(self.next_token, "Expected id or string literal");
     return error.InvalidTemplate;
 }
 
@@ -434,9 +482,14 @@ fn pc(self: *Parser) u32 {
 
 fn add_basic_instruction(self: *Parser, op: Template.Opcode) !void {
     switch (op) {
+        .push_literal, // literal_ref
+        .push_literal_var_len, // offset
         .print_literal, // literal_ref
+        .print_literal_var_len, // offset
         .field, // literal_ref
+        .field_var_len, // offset
         .push_field, // literal_ref
+        .push_field_var_len, // offset
         .index, // offset
         .dupe_ref, // offset
         .pop_and_skip_if_zero, // offset
@@ -445,9 +498,7 @@ fn add_basic_instruction(self: *Parser, op: Template.Opcode) !void {
         .skip_if_equal, // offset
         .increment_and_retry_if_less, // offset
         .push_var,
-        .print_literal_var_len,
-        .field_var_len,
-        .push_field_var_len,
+        .call_func, // offset
         => unreachable,
 
         .print_ref_raw,
@@ -479,6 +530,7 @@ fn add_basic_instruction(self: *Parser, op: Template.Opcode) !void {
 
 fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: u32) !void {
     switch (op) {
+        .push_literal, // literal_ref
         .print_literal, // literal_ref
         .print_ref_raw,
         .print_ref_escaped,
@@ -495,7 +547,7 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: u32) !void
         .pop_ref,
         .is_ref_nonnil,
         .push_nil,
-        .increment_and_retry_if_less, // offset
+        .increment_and_retry_if_less, // offset; handled by add_loop_instruction
         => unreachable,
 
         .index, // offset
@@ -503,12 +555,17 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: u32) !void
         .pop_and_skip_if_nonzero, // offset
         .skip, // offset
         .skip_if_equal, // offset
-        .push_var,
+        .push_var, // offset
         => {},
+
+        .call_func => {
+            self.ref_stack_depth -= offset + 1;
+        },
 
         .dupe_ref, // offset
         => try self.check_and_increment_ref_stack(),
 
+        .push_literal_var_len,
         .print_literal_var_len,
         .field_var_len,
         .push_field_var_len,
@@ -522,7 +579,10 @@ fn add_offset_instruction(self: *Parser, op: Template.Opcode, offset: u32) !void
 
 fn add_loop_instruction(self: *Parser, op: Template.Opcode, target_address: u32) !void {
     switch (op) {
+        .push_literal, // literal_ref
+        .push_literal_var_len, // offset
         .print_literal, // literal_ref
+        .print_literal_var_len, // offset
         .field, // literal_ref
         .push_field, // literal_ref
         .print_ref_raw,
@@ -545,9 +605,9 @@ fn add_loop_instruction(self: *Parser, op: Template.Opcode, target_address: u32)
         .pop_and_skip_if_nonzero, // offset
         .skip, // offset
         .push_var,
-        .print_literal_var_len,
         .field_var_len,
         .push_field_var_len,
+        .call_func, // offset
         => unreachable,
 
         .increment_and_retry_if_less, // offset
@@ -569,6 +629,7 @@ fn add_literal_ref_instruction(self: *Parser, op: Template.Opcode, literal_ref: 
         .field, // literal_ref
         => {},
 
+        .push_literal, // literal_ref
         .push_field, // literal_ref
         => try self.check_and_increment_ref_stack(),
 
@@ -592,10 +653,12 @@ fn add_literal_ref_instruction(self: *Parser, op: Template.Opcode, literal_ref: 
         .increment_and_retry_if_less, // offset
         .is_ref_nonnil,
         .push_nil,
+        .push_literal_var_len,
         .print_literal_var_len,
         .field_var_len,
         .push_field_var_len,
         .push_var,
+        .call_func, // offset
         => unreachable,
     }
 
@@ -611,6 +674,7 @@ fn add_literal_ref_instruction(self: *Parser, op: Template.Opcode, literal_ref: 
         });
         try self.instructions.append(self.gpa, .{
             .op = switch (op) {
+                .push_literal => .push_literal_var_len,
                 .print_literal => .print_literal_var_len,
                 .field => .field_var_len,
                 .push_field => .push_field_var_len,
@@ -623,7 +687,10 @@ fn add_literal_ref_instruction(self: *Parser, op: Template.Opcode, literal_ref: 
 
 fn finalize_skip_instruction(self: *Parser, instruction_address: u32, target_address: u32) void {
     switch (self.instructions.items(.op)[instruction_address]) {
+        .push_literal, // literal_ref
+        .push_literal_var_len, // offset
         .print_literal, // literal_ref
+        .print_literal_var_len,
         .field, // literal_ref
         .push_field, // literal_ref
         .print_ref_raw,
@@ -643,9 +710,9 @@ fn finalize_skip_instruction(self: *Parser, instruction_address: u32, target_add
         .is_ref_nonnil,
         .push_nil,
         .push_var,
-        .print_literal_var_len,
         .field_var_len,
         .push_field_var_len,
+        .call_func, // offset
         => unreachable,
 
         .skip_if_equal, // offset
