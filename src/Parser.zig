@@ -157,7 +157,9 @@ fn parse_item(self: *Parser) !bool {
             try self.parse_block();
             const end = self.pc();
             const end_token = self.next_token;
-            _ = try self.require_token(.end);
+            if (!self.try_token(.end)) {
+                try self.include_stack.getLast().report_error(fragment_token, "No `~` token found to close fragment definition");
+            }
 
             const spans = self.token_spans;
             const fragment_span = spans[fragment_token];
@@ -187,7 +189,9 @@ fn parse_item(self: *Parser) !bool {
             if (self.resource_callback(self, id)) |literal| {
                 try self.add_print_literal_instruction(literal);
             } else |err| {
-                try self.include_stack.getLast().report_error(self.next_token - 1, @errorName(err));
+                var buf: [256]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "Could not find resource {s}: {s}", .{ id, @errorName(err) }) catch &buf;
+                try self.include_stack.getLast().report_error(self.next_token - 1, msg);
             }
             return true;
         },
@@ -197,7 +201,9 @@ fn parse_item(self: *Parser) !bool {
             if (self.include_callback(self, id)) |source| {
                 try self.append(source);
             } else |err| {
-                try self.include_stack.getLast().report_error(self.next_token - 1, @errorName(err));
+                var buf: [256]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "Failed to include {s}: {s}", .{ id, @errorName(err) }) catch &buf;
+                try self.include_stack.getLast().report_error(self.next_token - 1, msg);
             }
             return true;
         },
@@ -248,6 +254,7 @@ fn parse_item(self: *Parser) !bool {
 }
 
 fn parse_condition(self: *Parser) !bool {
+    const condition_token = self.next_token;
     if (!self.try_token(.condition)) return false;
 
     try self.add_basic_instruction(.as_number);
@@ -255,6 +262,7 @@ fn parse_condition(self: *Parser) !bool {
     try self.add_offset_instruction(.pop_and_skip_if_zero, 0); // to else block or end of block
     try self.parse_block();
 
+    var otherwise_token: ?usize = self.next_token;
     if (self.try_token(.otherwise)) {
         const jump_instruction = self.pc();
         try self.add_offset_instruction(.skip, 0); // to end of block
@@ -262,14 +270,22 @@ fn parse_condition(self: *Parser) !bool {
         try self.parse_block();
         self.finalize_skip_instruction(jump_instruction, self.pc());
     } else {
+        otherwise_token = null;
         self.finalize_skip_instruction(conditional_jump_instruction, self.pc());
     }
 
-    _ = try self.require_token(.end);
+    if (!self.try_token(.end)) {
+        if (otherwise_token) |otherwise| {
+            try self.include_stack.getLast().report_error_2(condition_token, "No `~` token found to close block", otherwise, "Found `;` here");
+        } else {
+            try self.include_stack.getLast().report_error(condition_token, "No `~` token found to close block");
+        }
+    }
     return true;
 }
 
 fn parse_within(self: *Parser) !bool {
+    const within_token = self.next_token;
     if (!self.try_token(.within)) return false;
 
     try self.add_basic_instruction(.begin_loop);
@@ -284,6 +300,7 @@ fn parse_within(self: *Parser) !bool {
     self.finalize_skip_instruction(skip_if_equal_instruction, self.pc());
     try self.add_basic_instruction(.end_loop);
     
+    var otherwise_token: ?usize = self.next_token;
     if (self.try_token(.otherwise)) {
         const skip_to_end_of_block_instruction = self.pc();
         try self.add_offset_instruction(.skip, 0); // to end of block
@@ -292,9 +309,17 @@ fn parse_within(self: *Parser) !bool {
         try self.add_basic_instruction(.end_loop);
         try self.parse_block();
         self.finalize_skip_instruction(skip_to_end_of_block_instruction, self.pc());
+    } else {
+        otherwise_token = null;
     }
 
-    _ = try self.require_token(.end);
+    if (!self.try_token(.end)) {
+        if (otherwise_token) |otherwise| {
+            try self.include_stack.getLast().report_error_2(within_token, "No `~` token found to close block", otherwise, "Found `;` here");
+        } else {
+            try self.include_stack.getLast().report_error(within_token, "No `~` token found to close block");
+        }
+    }
     return true;
 }
 

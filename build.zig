@@ -6,7 +6,6 @@ pub fn build(b: *std.Build) void {
         .percent_encoding = b.dependency("percent_encoding", .{}).module("percent_encoding"),
     };
 
-
     const module = b.addModule("zkittle", .{
         .root_source_file = b.path("src/Template.zig"),
     });

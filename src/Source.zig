@@ -45,12 +45,32 @@ pub fn deinit(self: *Source, allocator: std.mem.Allocator) void {
 
 pub fn report_error(self: Source, token: usize, desc: []const u8) !void {
     const span = self.tokens.spans[token];
+
     try console.print_context(self.source, &.{
         .{
             .offset = @intFromPtr(span.ptr) - @intFromPtr(self.source.ptr),
             .len = span.len,
             .note = desc,
-        }
+        },
+    }, std.io.getStdErr().writer(), 160, .{
+        .filename = self.path,
+    });
+}
+pub fn report_error_2(self: Source, token: usize, desc: []const u8, token2: usize, desc2: []const u8) !void {
+    const span = self.tokens.spans[token];
+    const span2 = self.tokens.spans[token2];
+
+    try console.print_context(self.source, &.{
+        .{
+            .offset = @intFromPtr(span.ptr) - @intFromPtr(self.source.ptr),
+            .len = span.len,
+            .note = desc,
+        },
+        .{
+            .offset = @intFromPtr(span2.ptr) - @intFromPtr(self.source.ptr),
+            .len = span2.len,
+            .note = desc2,
+        },
     }, std.io.getStdErr().writer(), 160, .{
         .filename = self.path,
     });

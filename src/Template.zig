@@ -590,7 +590,7 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime Context: anytype) Ref 
         }},
         .pointer => |info| {
             switch (info.size) {
-                .Slice => {
+                .slice => {
                     if (info.child == u8) {
                         return .{ .value = .{
                             .data = @ptrCast(ptr),
@@ -606,10 +606,10 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime Context: anytype) Ref 
                         }};
                     }
                 },
-                .Many, .C => {
+                .many, .c => {
                     return make_ref(info.child, &ptr.*[0], Context);
                 },
-                .One => {
+                .one => {
                     return make_ref(info.child, ptr.*, Context);
                 },
             }
@@ -767,15 +767,10 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
                 }
             }
             inline for (@typeInfo(T).@"enum".decls) |d| {
-                const F = @TypeOf(@field(T, d.name));
-                if (@typeInfo(F) == .@"fn") {
-                    if (comptime std.mem.startsWith(u8, d.name, "zk_")) {
-                        if (std.mem.eql(u8, name, d.name[3..])) {
-                            return make_ref(F, &@field(T, d.name), Child_Context(Context, d.name));
-                        }
+                if (comptime std.mem.startsWith(u8, d.name, "zk_")) {
+                    if (std.mem.eql(u8, name, d.name[3..])) {
+                        return make_ref(@TypeOf(@field(T, d.name)), &@field(T, d.name), Child_Context(Context, d.name));
                     }
-                } else if (std.mem.eql(u8, name, d.name)) {
-                    return make_ref(F, &@field(T, d.name), Child_Context(Context, d.name));
                 }
             }
             return .nil;
@@ -889,15 +884,10 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
             }
 
             inline for (@typeInfo(T).@"union".decls) |d| {
-                const F = @TypeOf(@field(T, d.name));
-                if (@typeInfo(F) == .@"fn") {
-                    if (comptime std.mem.startsWith(u8, d.name, "zk_")) {
-                        if (std.mem.eql(u8, name, d.name[3..])) {
-                            return make_ref(F, &@field(T, d.name), Child_Context(Context, d.name));
-                        }
+                if (comptime std.mem.startsWith(u8, d.name, "zk_")) {
+                    if (std.mem.eql(u8, name, d.name[3..])) {
+                        return make_ref(@TypeOf(@field(T, d.name)), &@field(T, d.name), Child_Context(Context, d.name));
                     }
-                } else if (std.mem.eql(u8, name, d.name)) {
-                    return make_ref(F, &@field(T, d.name), Child_Context(Context, d.name));
                 }
             }
 
@@ -967,15 +957,10 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
                 }
             }
             inline for (@typeInfo(T).@"struct".decls) |d| {
-                const F = @TypeOf(@field(T, d.name));
-                if (@typeInfo(F) == .@"fn") {
-                    if (comptime std.mem.startsWith(u8, d.name, "zk_")) {
-                        if (std.mem.eql(u8, name, d.name[3..])) {
-                            return make_ref(F, &@field(T, d.name), Child_Context(Context, d.name));
-                        }
+                if (comptime std.mem.startsWith(u8, d.name, "zk_")) {
+                    if (std.mem.eql(u8, name, d.name[3..])) {
+                        return make_ref(@TypeOf(@field(T, d.name)), &@field(T, d.name), Child_Context(Context, d.name));
                     }
-                } else if (std.mem.eql(u8, name, d.name)) {
-                    return make_ref(F, &@field(T, d.name), Child_Context(Context, d.name));
                 }
             }
             return .nil;

@@ -133,7 +133,7 @@ pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {
                     i += 1;
                 },
                 ':' => {
-                    if (remaining.len > i + 1 and remaining[i + 1] > ' ') {
+                    if (remaining.len > i + 1 and remaining[i + 1] > ' ' and !std.mem.startsWith(u8, remaining[i + 1 ..], "//")) {
                         try append(&kinds, &spans, .fn_call, remaining[i .. i + 1]);
                     } else {
                         try append(&kinds, &spans, .within, remaining[i .. i + 1]);
