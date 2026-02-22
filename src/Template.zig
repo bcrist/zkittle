@@ -5,7 +5,8 @@ pub const escape = @import("escape.zig");
 
 const Template = @This();
 
-pub const Extension_Function = fn(root_ref: Ref, args: []const Ref, writer: std.io.AnyWriter, escape_fn: *const escape.Fn, url_fn: *const escape.Fn) anyerror!void;
+/// N.B. when using escape_writer or url_escape_writer, you must flush before returning or using another of the writers
+pub const Extension_Function = fn(root_ref: Ref, args: []const Ref, writer: *std.Io.Writer, escape_writer: *std.Io.Writer, url_escape_writer: *std.Io.Writer) std.Io.Writer.Error!void;
 
 pub const Render_Options = struct {
     Context: type = struct {},
@@ -13,7 +14,7 @@ pub const Render_Options = struct {
     url_fn: *const escape.Fn = escape.url,
 };
 
-pub fn render(self: Template, writer: std.io.AnyWriter, obj: anytype, comptime options: Render_Options) anyerror!void {
+pub fn render(self: Template, writer: *std.Io.Writer, obj: anytype, comptime options: Render_Options) anyerror!void {
     try self.execute(writer, make_ref(@TypeOf(obj), &obj, options.Context), options.escape_fn, options.url_fn);
 }
 
@@ -86,14 +87,14 @@ pub const Value = struct {
     data: *const anyopaque,
     as_number: *const fn (self: *const anyopaque) usize,
     field: *const fn(self: *const anyopaque, name: []const u8) Ref,
-    print: *const fn(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void,
+    print: *const fn(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void,
 };
 
 /// Instead of pointing to a number, just store it directly
 pub const Inline_Value = struct {
     data: usize,
     field: *const fn(self: usize, name: []const u8) Ref,
-    print: *const fn(self: usize, writer: std.io.AnyWriter) anyerror!void,
+    print: *const fn(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void,
 };
 
 opcodes: []const Opcode,
@@ -141,34 +142,21 @@ fn literal(self: Template, pc: usize) []const u8 {
     return self.literal_data[ref.offset..][0..ref.length];
 }
 
-pub fn print_ref(ref: Ref, writer: std.io.AnyWriter, escape_fn: ?*const escape.Fn) anyerror!void {
+pub fn print_ref(ref: Ref, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     switch (ref) {
         .nil, .func => {},
-        .collection => |c| if (escape_fn) |func| {
-            const w = escape.writer(writer, func);
+        .collection => |c| {
             for (0..c.size) |i| {
-                try print_ref(c.element(c.data, i), w.any(), null);
-            }
-        } else {
-            for (0..c.size) |i| {
-                try print_ref(c.element(c.data, i), writer, null);
+                try print_ref(c.element(c.data, i), writer);
             }
         },
-        .value => |v| if (escape_fn) |func| {
-            const w = escape.writer(writer, func);
-            try v.print(v.data, w.any());
-        } else {
+        .value => |v| {
             try v.print(v.data, writer);
         },
-        .inline_value => |v| if (escape_fn) |func| {
-            const w = escape.writer(writer, func);
-            try v.print(v.data, w.any());
-        } else {
+        .inline_value => |v| {
             try v.print(v.data, writer);
         },
-        .string_literal => |v| if (escape_fn) |func| {
-            try escape.writer(writer, func).writeAll(v);
-        } else {
+        .string_literal => |v| {
             try writer.writeAll(v);
         },
     }
@@ -191,7 +179,7 @@ fn number_ref(n: usize) Ref {
             _ = name;
             return .nil;
         }
-        pub fn print(self: usize, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             try writer.print("{d}", .{ self });
         }
     };
@@ -210,7 +198,7 @@ fn bool_ref(b: bool) Ref {
             _ = name;
             return .nil;
         }
-        pub fn print(self: usize, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             try writer.print("{}", .{ self != 0 });
         }
     };
@@ -263,7 +251,15 @@ fn lookup_index(ref: Ref, index: usize, pc: usize) !Ref {
     }
 }
 
-pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_fn: *const escape.Fn, url_fn: *const escape.Fn) anyerror!void {
+pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn: *const escape.Fn, url_fn: *const escape.Fn) anyerror!void {
+    var escape_writer_buf: [64]u8 = undefined;
+
+    var escape_writer_impl = escape.writer(writer, &escape_writer_buf, escape_fn);
+    const escape_writer = &escape_writer_impl.interface;
+
+    var url_escape_writer_impl = escape.writer(writer, &escape_writer_buf, url_fn);
+    const url_escape_writer = &url_escape_writer_impl.interface;
+
     const opcodes = self.opcodes;
 
     var variables: [max_stack_size + 1]usize = .{ 0 } ** (max_stack_size + 1);
@@ -278,14 +274,14 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
         switch (opcodes[pc]) {
             .push_var => {
                 const offset = self.operands[pc].offset;
-                log.debug("{}: push_var: var={} n={}", .{ pc, variable_sp, offset });
+                log.debug("{d}: push_var: var={d} n={d}", .{ pc, variable_sp, offset });
                 variables[variable_sp] = offset;
                 variable_sp += 1;
                 pc += 1;
             },
             .push_literal => {
                 const lit = self.literal(pc);
-                log.debug("{}: push_literal: ref={} lit={}", .{ pc, ref_sp, std.zig.fmtEscapes(lit) });
+                log.debug("{d}: push_literal: ref={d} lit={f}", .{ pc, ref_sp, std.zig.fmtString(lit) });
                 refs[ref_sp] = .{ .string_literal = lit };
                 ref_sp += 1;
                 pc += 1;
@@ -295,7 +291,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 const offset = self.operands[pc].offset;
                 const len = variables[variable_sp - 1];
                 const lit = self.literal_data[offset..][0..len];
-                log.debug("{}: push_literal_var_len: ref={} name={s}", .{ pc, ref_sp, lit });
+                log.debug("{d}: push_literal_var_len: ref={d} name={s}", .{ pc, ref_sp, lit });
                 refs[ref_sp] = .{ .string_literal = lit };
                 ref_sp += 1;
                 variable_sp -= 1;
@@ -303,7 +299,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             },
             .print_literal => {
                 const lit = self.literal(pc);
-                log.debug("{}: print_literal: {}", .{ pc, std.zig.fmtEscapes(lit) });
+                log.debug("{d}: print_literal: {f}", .{ pc, std.zig.fmtString(lit) });
                 try writer.writeAll(lit);
                 pc += 1;
             },
@@ -312,7 +308,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 const offset = self.operands[pc].offset;
                 const len = variables[variable_sp - 1];
                 const lit = self.literal_data[offset..][0..len];
-                log.debug("{}: print_literal_var_len: {}", .{ pc, std.zig.fmtEscapes(lit) });
+                log.debug("{d}: print_literal_var_len: {f}", .{ pc, std.zig.fmtString(lit) });
                 try writer.writeAll(lit);
                 variable_sp -= 1;
                 pc += 1;
@@ -320,30 +316,32 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             .print_ref_raw => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
-                log.debug("{}: print_ref_raw: ref={}", .{ pc, ref_sp });
-                try print_ref(refs[ref_sp], writer, null);
+                log.debug("{d}: print_ref_raw: ref={d}", .{ pc, ref_sp });
+                try print_ref(refs[ref_sp], writer);
                 pc += 1;
             },
             .print_ref_escaped => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
-                log.debug("{}: print_ref_escaped: ref={}", .{ pc, ref_sp });
-                try print_ref(refs[ref_sp], writer, escape_fn);
+                log.debug("{d}: print_ref_escaped: ref={d}", .{ pc, ref_sp });
+                try print_ref(refs[ref_sp], escape_writer);
+                try escape_writer.flush();
                 pc += 1;
             },
             .print_ref_url => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
-                log.debug("{}: print_ref_url: ref={}", .{ pc, ref_sp });
-                try print_ref(refs[ref_sp], writer, url_fn);
+                log.debug("{d}: print_ref_url: ref={d}", .{ pc, ref_sp });
+                try print_ref(refs[ref_sp], url_escape_writer);
+                try url_escape_writer.flush();
                 pc += 1;
             },
             .push_loop_index => {
                 if (variable_sp > 0) {
-                    log.debug("{}: push_loop_index: ref={}, var={}", .{ pc, ref_sp, variable_sp - 1 });
+                    log.debug("{d}: push_loop_index: ref={d}, var={d}", .{ pc, ref_sp, variable_sp - 1 });
                     refs[ref_sp] = number_ref(variables[variable_sp - 1]);
                 } else {
-                    log.debug("{}: push_loop_index: ref={}, (nil)", .{ pc, ref_sp });
+                    log.debug("{d}: push_loop_index: ref={d}, (nil)", .{ pc, ref_sp });
                     refs[ref_sp] = .nil;
                 }
                 ref_sp += 1;
@@ -352,7 +350,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             .field => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 const lit = self.literal(pc);
-                log.debug("{}: field: ref={} name={s}", .{ pc, ref_sp - 1, lit });
+                log.debug("{d}: field: ref={d} name={s}", .{ pc, ref_sp - 1, lit });
                 refs[ref_sp - 1] = try lookup_field(refs[ref_sp - 1], lit, pc);
                 pc += 1;
             },
@@ -362,7 +360,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 const offset = self.operands[pc].offset;
                 const len = variables[variable_sp - 1];
                 const lit = self.literal_data[offset..][0..len];
-                log.debug("{}: field_var_len: ref={} name={s}", .{ pc, ref_sp - 1, lit });
+                log.debug("{d}: field_var_len: ref={d} name={s}", .{ pc, ref_sp - 1, lit });
                 refs[ref_sp - 1] = try lookup_field(refs[ref_sp - 1], lit, pc);
                 variable_sp -= 1;
                 pc += 1;
@@ -370,7 +368,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             .push_field => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 const lit = self.literal(pc);
-                log.debug("{}: push_field: ref={} name={s}", .{ pc, ref_sp, lit });
+                log.debug("{d}: push_field: ref={d} name={s}", .{ pc, ref_sp, lit });
                 var i = ref_sp;
                 while (i > 0) : (i -= 1) {
                     const ref = try lookup_field(refs[i - 1], lit, pc);
@@ -390,7 +388,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 const offset = self.operands[pc].offset;
                 const len = variables[variable_sp - 1];
                 const lit = self.literal_data[offset..][0..len];
-                log.debug("{}: push_field_var_len: ref={} name={s}", .{ pc, ref_sp, lit });
+                log.debug("{d}: push_field_var_len: ref={d} name={s}", .{ pc, ref_sp, lit });
                 var i = ref_sp;
                 while (i > 0) : (i -= 1) {
                     const ref = try lookup_field(refs[i - 1], lit, pc);
@@ -408,7 +406,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             .index => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 const index = self.operands[pc].offset;
-                log.debug("{}: index: ref={} [{}]", .{ pc, ref_sp - 1, index });
+                log.debug("{d}: index: ref={d} [{d}]", .{ pc, ref_sp - 1, index });
                 refs[ref_sp - 1] = try lookup_index(refs[ref_sp - 1], index, pc);
                 pc += 1;
             },
@@ -416,7 +414,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
                 const number = ref_to_number(refs[ref_sp]);
-                log.debug("{}: as_number: ref={} var={} num={}", .{ pc, ref_sp, variable_sp, number });
+                log.debug("{d}: as_number: ref={d} var={d} num={d}", .{ pc, ref_sp, variable_sp, number });
                 variables[variable_sp] = number;
                 variable_sp += 1;
                 pc += 1;
@@ -424,7 +422,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             .number_to_ref => {
                 if (variable_sp == 0) return error.InvalidTemplate;
                 variable_sp -= 1;
-                log.debug("{}: number_to_ref: var={} ref={}", .{ pc, variable_sp, ref_sp });
+                log.debug("{d}: number_to_ref: var={d} ref={d}", .{ pc, variable_sp, ref_sp });
                 refs[ref_sp] = number_ref(variables[variable_sp]);
                 ref_sp += 1;
                 pc += 1;
@@ -432,14 +430,14 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             .dupe_ref => {
                 const offset = self.operands[pc].offset;
                 if (ref_sp <= offset) return error.InvalidTemplate;
-                log.debug("{}: dupe_ref: [ref={}] -> ref={}", .{ pc, ref_sp - offset - 1, ref_sp });
+                log.debug("{d}: dupe_ref: [ref={d}] -> ref={d}", .{ pc, ref_sp - offset - 1, ref_sp });
                 refs[ref_sp] = refs[ref_sp - offset - 1];
                 ref_sp += 1;
                 pc += 1;
             },
             .dupe_ref_0 => {
                 if (ref_sp == 0) return error.InvalidTemplate;
-                log.debug("{}: dupe_ref_0: ref={}", .{ pc, ref_sp });
+                log.debug("{d}: dupe_ref_0: ref={d}", .{ pc, ref_sp });
                 refs[ref_sp] = refs[ref_sp - 1];
                 ref_sp += 1;
                 pc += 1;
@@ -449,7 +447,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 variable_sp -= 1;
                 const value = variables[variable_sp];
                 const offset = self.operands[pc].offset;
-                log.debug("{}: pop_and_skip_if_zero: var={} val={} offset={}", .{ pc, variable_sp, value, offset });
+                log.debug("{d}: pop_and_skip_if_zero: var={d} val={d} offset={d}", .{ pc, variable_sp, value, offset });
                 if (value == 0) {
                     pc += offset + 1;
                 } else {
@@ -461,7 +459,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 variable_sp -= 1;
                 const value = variables[variable_sp];
                 const offset = self.operands[pc].offset;
-                log.debug("{}: pop_and_skip_if_zero: var={} val={} offset={}", .{ pc, variable_sp, value, offset });
+                log.debug("{d}: pop_and_skip_if_zero: var={d} val={d} offset={d}", .{ pc, variable_sp, value, offset });
                 if (value != 0) {
                     pc += offset + 1;
                 } else {
@@ -470,20 +468,20 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             },
             .skip => {
                 const offset = self.operands[pc].offset;
-                log.debug("{}: skip: offset={}", .{ pc, offset });
+                log.debug("{d}: skip: offset={d}", .{ pc, offset });
                 pc += offset + 1;
             },
             .begin_loop => {
                 variables[variable_sp] = ref_to_number(refs[ref_sp - 1]);
                 variables[variable_sp + 1] = 0;
-                log.debug("{}: begin_loop: ref={} var={} [{}] var={} [0]", .{ pc, ref_sp - 1, variable_sp, variables[variable_sp], variable_sp + 1 });
+                log.debug("{d}: begin_loop: ref={d} var={d} [{d}] var={d} [0]", .{ pc, ref_sp - 1, variable_sp, variables[variable_sp], variable_sp + 1 });
                 variable_sp += 2;
                 pc += 1;
             },
             .end_loop => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 if (variable_sp < 2) return error.InvalidTemplate;
-                log.debug("{}: end_loop", .{ pc });
+                log.debug("{d}: end_loop", .{ pc });
                 variable_sp -= 2;
                 ref_sp -= 1;
                 pc += 1;
@@ -493,7 +491,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 const val1 = variables[variable_sp - 1];
                 const val2 = variables[variable_sp - 2];
                 const offset = self.operands[pc].offset;
-                log.debug("{}: skip_if_equal: val-2={} val-1={}, offset={}", .{ pc, val2, val1, offset });
+                log.debug("{d}: skip_if_equal: val-2={d} val-1={d}, offset={d}", .{ pc, val2, val1, offset });
                 if (val1 == val2) {
                     pc += offset + 1;
                 } else {
@@ -503,14 +501,14 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             .dupe_ref_0_indexed => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 if (variable_sp == 0) return error.InvalidTemplate;
-                log.debug("{}: dupe_ref_0_indexed: ref={} var={} [{}]", .{ pc, ref_sp - 1, variable_sp - 1, variables[variable_sp - 1] });
+                log.debug("{d}: dupe_ref_0_indexed: ref={d} var={d} [{d}]", .{ pc, ref_sp - 1, variable_sp - 1, variables[variable_sp - 1] });
                 refs[ref_sp] = try lookup_index(refs[ref_sp - 1], variables[variable_sp - 1], pc);
                 ref_sp += 1;
                 pc += 1;
             },
             .pop_ref => {
                 if (ref_sp == 0) return error.InvalidTemplate;
-                log.debug("{}: pop_ref: ref={}", .{ pc, ref_sp - 1 });
+                log.debug("{d}: pop_ref: ref={d}", .{ pc, ref_sp - 1 });
                 ref_sp -= 1;
                 pc += 1;
             },
@@ -519,7 +517,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 const compare = variables[variable_sp - 2];
                 const new = variables[variable_sp - 1] + 1;
                 const offset = self.operands[pc].offset;
-                log.debug("{}: increment_and_retry_if_less: inc_var={} [{}] compare_var={} [{}], addr={}", .{ pc, variable_sp - 1, new, variable_sp - 2, compare, pc - offset });
+                log.debug("{d}: increment_and_retry_if_less: inc_var={d} [{d}] compare_var={d} [{d}], addr={d}", .{ pc, variable_sp - 1, new, variable_sp - 2, compare, pc - offset });
                 variables[variable_sp - 1] = new;
                 if (new < compare) {
                     pc -= offset;
@@ -529,7 +527,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             },
             .is_ref_nonnil => {
                 if (ref_sp == 0) return error.InvalidTemplate;
-                log.debug("{}: is_ref_nonnil: ref={}", .{ pc, ref_sp - 1 });
+                log.debug("{d}: is_ref_nonnil: ref={d}", .{ pc, ref_sp - 1 });
                 refs[ref_sp - 1] = bool_ref(refs[ref_sp - 1] != .nil);
                 pc += 1;
             },
@@ -542,11 +540,11 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 const num_params = self.operands[pc].offset;
                 if (ref_sp < num_params + 2) return error.InvalidTemplate;
                 const fn_ref = ref_sp - num_params - 1;
-                log.debug("{}: call_func: fn={} params={}", .{ pc, fn_ref, num_params });
+                log.debug("{d}: call_func: fn={d} params={d}", .{ pc, fn_ref, num_params });
                 const params = refs[fn_ref + 1 ..][0..num_params];
                 switch (refs[fn_ref]) {
                     .nil, .collection, .value, .inline_value, .string_literal => {},
-                    .func => |fn_ptr| try fn_ptr(refs[0], params, writer, escape_fn, url_fn),
+                    .func => |fn_ptr| try fn_ptr(refs[0], params, writer, escape_writer, url_escape_writer),
                 }
                 ref_sp = fn_ref;
                 pc += 1;
@@ -687,7 +685,7 @@ fn Bool_VTable(comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const ptr: *const bool = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -711,7 +709,7 @@ fn Int_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -735,7 +733,7 @@ fn Float_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -776,7 +774,7 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -806,7 +804,7 @@ fn String_VTable(comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const ptr: *const []const u8 = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -832,7 +830,7 @@ fn Array_String_VTable(comptime length: usize, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const ptr: *const [length]u8 = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr, writer),
@@ -899,7 +897,7 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => {
@@ -913,7 +911,7 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
                     inline for (0.., @typeInfo(T).@"union".fields) |i, f| {
                         if (i == ordinal) {
                             const ref = make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
-                            try print_ref(ref, writer, null);
+                            try print_ref(ref, writer);
                         }
                     }
                 },
@@ -966,7 +964,7 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -975,10 +973,10 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
                     if (f.is_comptime) {
                         const val = @field(ptr.*, f.name);
                         const ref = make_ref(f.type, &val, Child_Context(Context, f.name));
-                        try print_ref(ref, writer, null);
+                        try print_ref(ref, writer);
                     } else {
                         const ref = make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
-                        try print_ref(ref, writer, null);
+                        try print_ref(ref, writer);
                     }
                 },
             }

@@ -1,41 +1,39 @@
-const std = @import("std");
-
 pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
     const ext = .{
         .console = b.dependency("console_helper", .{}).module("console"),
         .percent_encoding = b.dependency("percent_encoding", .{}).module("percent_encoding"),
     };
 
-    const module = b.addModule("zkittle", .{
+    _ = b.addModule("zkittle", .{
         .root_source_file = b.path("src/Template.zig"),
+        .imports = &.{
+            .{ .name = "console", .module = ext.console },
+            .{ .name = "percent_encoding", .module = ext.percent_encoding },
+        },
     });
-    module.addImport("console", ext.console);
-    module.addImport("percent_encoding", ext.percent_encoding);
-
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
 
     const tests = b.addTest(.{
-        .root_source_file = b.path("tests.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "console", .module = ext.console },
+                .{ .name = "percent_encoding", .module = ext.percent_encoding },
+            },
+        }),
     });
-    tests.root_module.addImport("console", ext.console);
-    tests.root_module.addImport("percent_encoding", ext.percent_encoding);
-    const run_tests = b.addRunArtifact(tests);
-    const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(&run_tests.step);
-
+    b.step("test", "Run all tests").dependOn(&b.addRunArtifact(tests).step);
+    b.installArtifact(tests);
 
     const test_exe = b.addExecutable(.{
         .name = "testexe",
-        .root_source_file = b.path("tests.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = tests.root_module,
     });
-    test_exe.root_module.addImport("console", ext.console);
-    test_exe.root_module.addImport("percent_encoding", ext.percent_encoding);
-    const run_test_exe = b.addRunArtifact(test_exe);
-    const test_exe_step = b.step("testexe", "Run test executable");
-    test_exe_step.dependOn(&run_test_exe.step);
+    b.step("testexe", "Run test executable").dependOn(&b.addRunArtifact(test_exe).step);
 }
+
+const std = @import("std");

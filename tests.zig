@@ -187,14 +187,14 @@ fn test_lex(src: []const u8, expected: []const u8) !void {
     var tokens = try Token.lex(std.testing.allocator, src);
     defer tokens.deinit(std.testing.allocator);
 
-    var temp = std.ArrayList(u8).init(std.testing.allocator);
+    var temp = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer temp.deinit();
 
     for (tokens.kinds, tokens.spans) |kind, span| {
-        try temp.writer().print("{s}:{}\n", .{ @tagName(kind), std.zig.fmtEscapes(span) });
+        try temp.writer.print("{s}:{f}\n", .{ @tagName(kind), std.zig.fmtString(span) });
     }
 
-    try std.testing.expectEqualStrings(expected, temp.items);
+    try std.testing.expectEqualStrings(expected, temp.written());
 }
 
 
@@ -699,10 +699,15 @@ fn test_resource_callback(p: *Parser, id: []const u8) anyerror![]const u8 {
 }
 
 fn test_parse(source_str: []const u8, expected: []const u8) !void {
+    var buf: [64]u8 = undefined;
+    const stderr = std.debug.lockStderr(&buf);
+    defer std.debug.unlockStderr();
+
     var parser: Parser = .{
         .gpa = std.testing.allocator,
         .include_callback = test_include_callback,
         .resource_callback = test_resource_callback,
+        .diagnostic_writer = &stderr.file_writer.interface,
     };
     defer parser.deinit();
 
@@ -714,10 +719,10 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
     var template = try parser.finish(std.testing.allocator, true);
     defer template.deinit(std.testing.allocator);
 
-    var temp = std.ArrayList(u8).init(std.testing.allocator);
+    var temp = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer temp.deinit();
 
-    var writer = temp.writer();
+    var writer = &temp.writer;
 
     for (0.., template.opcodes) |i, opcode| {
         const operands = template.operands[i];
@@ -726,13 +731,13 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
             .push_literal, .print_literal, .field, .push_field => {
                 const ref = operands.literal_ref();
                 const span = template.literal_data[ref.offset..][0..ref.length];
-                try writer.print(": \"{}\"", .{ std.zig.fmtEscapes(span) });
+                try writer.print(": \"{f}\"", .{ std.zig.fmtString(span) });
             },
             .push_literal_var_len, .print_literal_var_len, .field_var_len, .push_field_var_len,
             .skip_if_equal, .increment_and_retry_if_less,
             .index, .dupe_ref, .skip, .push_var, .call_func,
             .pop_and_skip_if_zero, .pop_and_skip_if_nonzero => {
-                try writer.print(": {}", .{ operands.offset });
+                try writer.print(": {d}", .{ operands.offset });
             },
             .print_ref_raw, .print_ref_escaped, .print_ref_url, .push_loop_index,
             .begin_loop, .end_loop, .dupe_ref_0_indexed, .pop_ref,
@@ -743,13 +748,16 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
         try writer.writeByte('\n');
     }
 
-    try std.testing.expectEqualStrings(expected, temp.items);
+    try std.testing.expectEqualStrings(expected, temp.written());
 }
 fn test_invalid_parse(source_str: []const u8) !void {
+    var w = std.Io.Writer.Discarding.init(&.{});
+
     var parser: Parser = .{
         .gpa = std.testing.allocator,
         .include_callback = test_include_callback,
         .resource_callback = test_resource_callback,
+        .diagnostic_writer = &w.writer,
     };
     defer parser.deinit();
 
@@ -757,6 +765,7 @@ fn test_invalid_parse(source_str: []const u8) !void {
     defer source.deinit(std.testing.allocator);
 
     try std.testing.expectError(error.InvalidTemplate, parser.append(source));
+    try std.testing.expect(w.count > 0);
 }
 
 test "render" {
@@ -965,21 +974,22 @@ test "render" {
     );
 }
 
-fn print_ok(root_ref: Template.Ref, args: []const Template.Ref, writer: std.io.AnyWriter, escape_fn: *const Template.escape.Fn, url_fn: *const Template.escape.Fn) anyerror!void {
+fn print_ok(root_ref: Template.Ref, args: []const Template.Ref, writer: *std.Io.Writer, escape_writer: *std.Io.Writer, url_escape_writer: *std.Io.Writer) std.Io.Writer.Error!void {
     _ = root_ref;
     _ = args;
-    _ = escape_fn;
-    _ = url_fn;
+    _ = escape_writer;
+    _ = url_escape_writer;
     try writer.writeAll("ok");
 }
 
-fn print_args(root_ref: Template.Ref, args: []const Template.Ref, writer: std.io.AnyWriter, escape_fn: *const Template.escape.Fn, url_fn: *const Template.escape.Fn) anyerror!void {
+fn print_args(root_ref: Template.Ref, args: []const Template.Ref, writer: *std.Io.Writer, escape_writer: *std.Io.Writer, url_escape_writer: *std.Io.Writer) std.Io.Writer.Error!void {
     _ = root_ref;
-    _ = escape_fn;
-    _ = url_fn;
+    _ = writer;
+    _ = url_escape_writer;
     for (args) |ref| {
-        try Template.print_ref(ref, writer, null);
+        try Template.print_ref(ref, escape_writer);
     }
+    try escape_writer.flush();
 }
 
 fn test_template(source_str: []const u8, value: anytype, expected: []const u8) !void {
@@ -990,10 +1000,15 @@ fn test_template_fragment(source_str: []const u8, value: anytype, fragment: []co
 }
 
 fn test_template_alloc(allocator: std.mem.Allocator, source_str: []const u8, fragment: ?[]const u8, value: anytype, expected: []const u8) !void {
+    var buf: [64]u8 = undefined;
+    const stderr = std.debug.lockStderr(&buf);
+    defer std.debug.unlockStderr();
+
     var parser: Parser = .{
         .gpa = allocator,
         .include_callback = test_include_callback,
         .resource_callback = test_resource_callback,
+        .diagnostic_writer = &stderr.file_writer.interface,
     };
     defer parser.deinit();
 
@@ -1005,12 +1020,11 @@ fn test_template_alloc(allocator: std.mem.Allocator, source_str: []const u8, fra
     var template = if (fragment) |name| try parser.get_fragment(allocator, name) orelse return error.FragmentNotFound else try parser.finish(allocator, true);
     defer template.deinit(allocator);
 
-    var temp = std.ArrayList(u8).init(allocator);
+    var temp = std.Io.Writer.Allocating.init(allocator);
     defer temp.deinit();
 
-    const writer = temp.writer();
-    try template.render(writer.any(), value, .{});
-    try std.testing.expectEqualStrings(expected, temp.items);
+    try template.render(&temp.writer, value, .{});
+    try std.testing.expectEqualStrings(expected, temp.written());
 }
 
 const Template = @import("src/Template.zig");
