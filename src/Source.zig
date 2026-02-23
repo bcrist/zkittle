@@ -20,12 +20,11 @@ pub fn init_buf(allocator: std.mem.Allocator, path: []const u8, source: []const 
     };
 }
 
-pub fn init_file(allocator: std.mem.Allocator, dir: std.fs.Dir, path: []const u8) !Source {
-    const realpath = try dir.realpathAlloc(allocator, path);
+pub fn init_file(allocator: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, path: []const u8) !Source {
+    const realpath = dir.realPathFileAlloc(io, path, allocator) catch try allocator.dupe(u8, path);
     errdefer allocator.free(realpath);
 
-    const stat = try dir.statFile(realpath);
-    const source = try dir.readFileAllocOptions(allocator, realpath, 1_000_000_000, stat.size, 1, null);
+    const source = try dir.readFileAllocOptions(io, path, allocator, .limited(1_000_000_000), .@"1", null);
     errdefer allocator.free(source);
 
     const tokens = try Token.lex(allocator, source);
