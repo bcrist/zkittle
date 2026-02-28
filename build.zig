@@ -27,13 +27,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.step("test", "Run all tests").dependOn(&b.addRunArtifact(tests).step);
-    b.installArtifact(tests);
-
-    const test_exe = b.addExecutable(.{
-        .name = "testexe",
-        .root_module = tests.root_module,
-    });
-    b.step("testexe", "Run test executable").dependOn(&b.addRunArtifact(test_exe).step);
 }
 
 const std = @import("std");

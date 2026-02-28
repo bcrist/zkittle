@@ -1020,7 +1020,7 @@ fn test_template_alloc(allocator: std.mem.Allocator, source_str: []const u8, fra
     var template = if (fragment) |name| try parser.get_fragment(allocator, name) orelse return error.FragmentNotFound else try parser.finish(allocator, true);
     defer template.deinit(allocator);
 
-    var temp = std.Io.Writer.Allocating.init(allocator);
+    var temp: std.Io.Writer.Allocating = .init(allocator);
     defer temp.deinit();
 
     try template.render(&temp.writer, value, .{});
