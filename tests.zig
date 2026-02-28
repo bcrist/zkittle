@@ -187,11 +187,11 @@ fn test_lex(src: []const u8, expected: []const u8) !void {
     var tokens = try Token.lex(std.testing.allocator, src);
     defer tokens.deinit(std.testing.allocator);
 
-    var temp = std.ArrayList(u8).init(std.testing.allocator);
-    defer temp.deinit();
+    var temp: std.ArrayList(u8) = .empty;
+    defer temp.deinit(std.testing.allocator);
 
     for (tokens.kinds, tokens.spans) |kind, span| {
-        try temp.writer().print("{s}:{}\n", .{ @tagName(kind), std.zig.fmtEscapes(span) });
+        try temp.writer(std.testing.allocator).print("{s}:{f}\n", .{ @tagName(kind), std.zig.fmtString(span) });
     }
 
     try std.testing.expectEqualStrings(expected, temp.items);
@@ -714,10 +714,10 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
     var template = try parser.finish(std.testing.allocator, true);
     defer template.deinit(std.testing.allocator);
 
-    var temp = std.ArrayList(u8).init(std.testing.allocator);
-    defer temp.deinit();
+    var temp: std.ArrayList(u8) = .empty;
+    defer temp.deinit(std.testing.allocator);
 
-    var writer = temp.writer();
+    var writer = temp.writer(std.testing.allocator);
 
     for (0.., template.opcodes) |i, opcode| {
         const operands = template.operands[i];
@@ -726,7 +726,7 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
             .push_literal, .print_literal, .field, .push_field => {
                 const ref = operands.literal_ref();
                 const span = template.literal_data[ref.offset..][0..ref.length];
-                try writer.print(": \"{}\"", .{ std.zig.fmtEscapes(span) });
+                try writer.print(": \"{f}\"", .{ std.zig.fmtString(span) });
             },
             .push_literal_var_len, .print_literal_var_len, .field_var_len, .push_field_var_len,
             .skip_if_equal, .increment_and_retry_if_less,
@@ -965,7 +965,7 @@ test "render" {
     );
 }
 
-fn print_ok(root_ref: Template.Ref, args: []const Template.Ref, writer: std.io.AnyWriter, escape_fn: *const Template.escape.Fn, url_fn: *const Template.escape.Fn) anyerror!void {
+fn print_ok(root_ref: Template.Ref, args: []const Template.Ref, writer: *std.io.Writer, escape_fn: *const Template.escape.Fn, url_fn: *const Template.escape.Fn) anyerror!void {
     _ = root_ref;
     _ = args;
     _ = escape_fn;
@@ -973,7 +973,7 @@ fn print_ok(root_ref: Template.Ref, args: []const Template.Ref, writer: std.io.A
     try writer.writeAll("ok");
 }
 
-fn print_args(root_ref: Template.Ref, args: []const Template.Ref, writer: std.io.AnyWriter, escape_fn: *const Template.escape.Fn, url_fn: *const Template.escape.Fn) anyerror!void {
+fn print_args(root_ref: Template.Ref, args: []const Template.Ref, writer: *std.io.Writer, escape_fn: *const Template.escape.Fn, url_fn: *const Template.escape.Fn) anyerror!void {
     _ = root_ref;
     _ = escape_fn;
     _ = url_fn;
@@ -1005,12 +1005,11 @@ fn test_template_alloc(allocator: std.mem.Allocator, source_str: []const u8, fra
     var template = if (fragment) |name| try parser.get_fragment(allocator, name) orelse return error.FragmentNotFound else try parser.finish(allocator, true);
     defer template.deinit(allocator);
 
-    var temp = std.ArrayList(u8).init(allocator);
+    var temp: std.io.Writer.Allocating = .init(allocator);
     defer temp.deinit();
 
-    const writer = temp.writer();
-    try template.render(writer.any(), value, .{});
-    try std.testing.expectEqualStrings(expected, temp.items);
+    try template.render(&temp.writer, value, .{});
+    try std.testing.expectEqualStrings(expected, temp.written());
 }
 
 const Template = @import("src/Template.zig");

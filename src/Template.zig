@@ -5,7 +5,7 @@ pub const escape = @import("escape.zig");
 
 const Template = @This();
 
-pub const Extension_Function = fn(root_ref: Ref, args: []const Ref, writer: std.io.AnyWriter, escape_fn: *const escape.Fn, url_fn: *const escape.Fn) anyerror!void;
+pub const Extension_Function = fn(root_ref: Ref, args: []const Ref, writer: *std.io.Writer, escape_fn: *const escape.Fn, url_fn: *const escape.Fn) anyerror!void;
 
 pub const Render_Options = struct {
     Context: type = struct {},
@@ -13,7 +13,7 @@ pub const Render_Options = struct {
     url_fn: *const escape.Fn = escape.url,
 };
 
-pub fn render(self: Template, writer: std.io.AnyWriter, obj: anytype, comptime options: Render_Options) anyerror!void {
+pub fn render(self: Template, writer: *std.io.Writer, obj: anytype, comptime options: Render_Options) anyerror!void {
     try self.execute(writer, make_ref(@TypeOf(obj), &obj, options.Context), options.escape_fn, options.url_fn);
 }
 
@@ -86,14 +86,14 @@ pub const Value = struct {
     data: *const anyopaque,
     as_number: *const fn (self: *const anyopaque) usize,
     field: *const fn(self: *const anyopaque, name: []const u8) Ref,
-    print: *const fn(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void,
+    print: *const fn(self: *const anyopaque, writer: *std.io.Writer) anyerror!void,
 };
 
 /// Instead of pointing to a number, just store it directly
 pub const Inline_Value = struct {
     data: usize,
     field: *const fn(self: usize, name: []const u8) Ref,
-    print: *const fn(self: usize, writer: std.io.AnyWriter) anyerror!void,
+    print: *const fn(self: usize, writer: *std.io.Writer) anyerror!void,
 };
 
 opcodes: []const Opcode,
@@ -141,13 +141,13 @@ fn literal(self: Template, pc: usize) []const u8 {
     return self.literal_data[ref.offset..][0..ref.length];
 }
 
-pub fn print_ref(ref: Ref, writer: std.io.AnyWriter, escape_fn: ?*const escape.Fn) anyerror!void {
+pub fn print_ref(ref: Ref, writer: *std.io.Writer, escape_fn: ?*const escape.Fn) anyerror!void {
     switch (ref) {
         .nil, .func => {},
         .collection => |c| if (escape_fn) |func| {
-            const w = escape.writer(writer, func);
+            var w = escape.writer(writer, &.{}, func);
             for (0..c.size) |i| {
-                try print_ref(c.element(c.data, i), w.any(), null);
+                try print_ref(c.element(c.data, i), &w.new_interface, null);
             }
         } else {
             for (0..c.size) |i| {
@@ -155,19 +155,20 @@ pub fn print_ref(ref: Ref, writer: std.io.AnyWriter, escape_fn: ?*const escape.F
             }
         },
         .value => |v| if (escape_fn) |func| {
-            const w = escape.writer(writer, func);
-            try v.print(v.data, w.any());
+            var w = escape.writer(writer, &.{}, func);
+            try v.print(v.data, &w.new_interface);
         } else {
             try v.print(v.data, writer);
         },
         .inline_value => |v| if (escape_fn) |func| {
-            const w = escape.writer(writer, func);
-            try v.print(v.data, w.any());
+            var w = escape.writer(writer, &.{}, func);
+            try v.print(v.data, &w.new_interface);
         } else {
             try v.print(v.data, writer);
         },
         .string_literal => |v| if (escape_fn) |func| {
-            try escape.writer(writer, func).writeAll(v);
+            var w = escape.writer(writer, &.{}, func);
+            try w.new_interface.writeAll(v);
         } else {
             try writer.writeAll(v);
         },
@@ -191,7 +192,7 @@ fn number_ref(n: usize) Ref {
             _ = name;
             return .nil;
         }
-        pub fn print(self: usize, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: usize, writer: *std.io.Writer) anyerror!void {
             try writer.print("{d}", .{ self });
         }
     };
@@ -210,7 +211,7 @@ fn bool_ref(b: bool) Ref {
             _ = name;
             return .nil;
         }
-        pub fn print(self: usize, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: usize, writer: *std.io.Writer) anyerror!void {
             try writer.print("{}", .{ self != 0 });
         }
     };
@@ -263,7 +264,7 @@ fn lookup_index(ref: Ref, index: usize, pc: usize) !Ref {
     }
 }
 
-pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_fn: *const escape.Fn, url_fn: *const escape.Fn) anyerror!void {
+pub fn execute(self: Template, writer: *std.io.Writer, root_ref: Ref, escape_fn: *const escape.Fn, url_fn: *const escape.Fn) anyerror!void {
     const opcodes = self.opcodes;
 
     var variables: [max_stack_size + 1]usize = .{ 0 } ** (max_stack_size + 1);
@@ -285,7 +286,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             },
             .push_literal => {
                 const lit = self.literal(pc);
-                log.debug("{}: push_literal: ref={} lit={}", .{ pc, ref_sp, std.zig.fmtEscapes(lit) });
+                log.debug("{}: push_literal: ref={} lit={f}", .{ pc, ref_sp, std.zig.fmtString(lit) });
                 refs[ref_sp] = .{ .string_literal = lit };
                 ref_sp += 1;
                 pc += 1;
@@ -303,7 +304,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
             },
             .print_literal => {
                 const lit = self.literal(pc);
-                log.debug("{}: print_literal: {}", .{ pc, std.zig.fmtEscapes(lit) });
+                log.debug("{}: print_literal: {f}", .{ pc, std.zig.fmtString(lit) });
                 try writer.writeAll(lit);
                 pc += 1;
             },
@@ -312,7 +313,7 @@ pub fn execute(self: Template, writer: std.io.AnyWriter, root_ref: Ref, escape_f
                 const offset = self.operands[pc].offset;
                 const len = variables[variable_sp - 1];
                 const lit = self.literal_data[offset..][0..len];
-                log.debug("{}: print_literal_var_len: {}", .{ pc, std.zig.fmtEscapes(lit) });
+                log.debug("{}: print_literal_var_len: {f}", .{ pc, std.zig.fmtString(lit) });
                 try writer.writeAll(lit);
                 variable_sp -= 1;
                 pc += 1;
@@ -687,7 +688,7 @@ fn Bool_VTable(comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.io.Writer) anyerror!void {
             const ptr: *const bool = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -711,7 +712,7 @@ fn Int_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.io.Writer) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -735,7 +736,7 @@ fn Float_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.io.Writer) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -776,7 +777,7 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.io.Writer) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -806,7 +807,7 @@ fn String_VTable(comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.io.Writer) anyerror!void {
             const ptr: *const []const u8 = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
@@ -832,7 +833,7 @@ fn Array_String_VTable(comptime length: usize, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.io.Writer) anyerror!void {
             const ptr: *const [length]u8 = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr, writer),
@@ -899,7 +900,7 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.io.Writer) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => {
@@ -966,7 +967,7 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
             return .nil;
         }
 
-        pub fn print(self: *const anyopaque, writer: std.io.AnyWriter) anyerror!void {
+        pub fn print(self: *const anyopaque, writer: *std.io.Writer) anyerror!void {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),

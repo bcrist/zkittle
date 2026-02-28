@@ -32,8 +32,8 @@ pub const Literal_Ref = packed struct {
     length: u32,
 
     pub fn small(self: Literal_Ref) ?Template.Literal_Ref {
-        const Offset = std.meta.FieldType(Template.Literal_Ref, .offset);
-        const Length = std.meta.FieldType(Template.Literal_Ref, .length);
+        const Offset = @FieldType(Template.Literal_Ref, "offset");
+        const Length = @FieldType(Template.Literal_Ref, "length");
 
         if (self.offset > std.math.maxInt(Offset)) return null;
         if (self.length > std.math.maxInt(Length)) return null;

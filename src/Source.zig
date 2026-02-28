@@ -46,19 +46,27 @@ pub fn deinit(self: *Source, allocator: std.mem.Allocator) void {
 pub fn report_error(self: Source, token: usize, desc: []const u8) !void {
     const span = self.tokens.spans[token];
 
+    var buf: [64]u8 = undefined;
+    var stderr = std.fs.File.stderr().writer(&buf);
+
     try console.print_context(self.source, &.{
         .{
             .offset = @intFromPtr(span.ptr) - @intFromPtr(self.source.ptr),
             .len = span.len,
             .note = desc,
         },
-    }, std.io.getStdErr().writer(), 160, .{
+    }, &stderr.interface, 160, .{
         .filename = self.path,
     });
+
+    try stderr.interface.flush();
 }
 pub fn report_error_2(self: Source, token: usize, desc: []const u8, token2: usize, desc2: []const u8) !void {
     const span = self.tokens.spans[token];
     const span2 = self.tokens.spans[token2];
+
+    var buf: [64]u8 = undefined;
+    var stderr = std.fs.File.stderr().writer(&buf);
 
     try console.print_context(self.source, &.{
         .{
@@ -71,9 +79,11 @@ pub fn report_error_2(self: Source, token: usize, desc: []const u8, token2: usiz
             .len = span2.len,
             .note = desc2,
         },
-    }, std.io.getStdErr().writer(), 160, .{
+    }, &stderr.interface, 160, .{
         .filename = self.path,
     });
+
+    try stderr.interface.flush();
 }
 
 const Token = @import("Token.zig");

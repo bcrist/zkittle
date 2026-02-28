@@ -1,20 +1,22 @@
 .{
-    .name = "zkittle",
-    .version = "0.0.10",
-    .minimum_zig_version = "0.14.0-dev.3217+5b9b5e45c",
+    .name = .zkittle,
+    .fingerprint = 0x6050fc854cf8dd36,
+    .version = "0.0.11",
+    .minimum_zig_version = "0.15.1",
     .paths = .{
         "src",
         "build.zig",
         "build.zig.zon",
+        "license",
     },
     .dependencies = .{
         .console_helper = .{
-            .url = "git+https://github.com/bcrist/zig-consolehelper#e39301c1d36b3a2aa98a8c7c8e5fa2eaddfd1000",
-            .hash = "122006a04539cb247748b9d786bc8d7045f4688575cadaffc3d442a4e5bdc8705527",
+            .url = "git+https://github.com/bcrist/zig-consolehelper#4069d2613b7c6b0c9165735566c6962c081d31c6",
+            .hash = "console_helper-0.3.1-19g4EypEAACdbhJI9ZkRAXTR7xOalHE2rMiLlqa0zf9N",
         },
         .percent_encoding = .{
-            .url = "git+https://github.com/bcrist/zig-percent-encoding#5bb61c66cabf8cd7724f1539ad5c4c421ebd2c4c",
-            .hash = "12208ce96000d7263c362543c19236d68cbf1f05c69c7305ed4915db82970719c61d",
+            .url = "git+https://github.com/bcrist/zig-percent-encoding#649cfe5f2327db7c532ce3428786547d06469ca7",
+            .hash = "percent_encoding-0.0.4-wAmwgGeAAADBvRv-Q69AQYTYNOmeJ-HJUnuNZUaebhrx",
         },
     },
 }
