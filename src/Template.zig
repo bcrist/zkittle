@@ -15,7 +15,7 @@ pub const Render_Options = struct {
 };
 
 pub fn render(self: Template, writer: *std.Io.Writer, obj: anytype, comptime options: Render_Options) anyerror!void {
-    try self.execute(writer, make_ref(@TypeOf(obj), &obj, options.Context), options.escape_fn, options.url_fn);
+    try self.execute(writer, ref_from_ptr(@TypeOf(obj), &obj, options.Context), options.escape_fn, options.url_fn);
 }
 
 pub const max_stack_size = 31;
@@ -553,7 +553,7 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
     }
 }
 
-pub fn make_ref(comptime T: type, ptr: *const T, comptime Context: anytype) Ref {
+pub fn ref_from_ptr(comptime T: type, ptr: *const T, comptime Context: anytype) Ref {
     return switch (@typeInfo(T)) {
         .void, .undefined => .nil,
         .null => .{ .collection = .{
@@ -573,7 +573,7 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime Context: anytype) Ref 
             .field = Int_VTable(T, Context).field,
             .print = Int_VTable(T, Context).print,
         }},
-        .comptime_int => number_ref(@as(usize, ptr.*)),
+        .comptime_int => @compileError("use number_ref instead!"),
         .float => .{ .value = .{
             .data = ptr,
             .as_number = Float_VTable(T, Context).as_number,
@@ -605,10 +605,10 @@ pub fn make_ref(comptime T: type, ptr: *const T, comptime Context: anytype) Ref 
                     }
                 },
                 .many, .c => {
-                    return make_ref(info.child, &ptr.*[0], Context);
+                    return ref_from_ptr(info.child, &ptr.*[0], Context);
                 },
                 .one => {
-                    return make_ref(info.child, ptr.*, Context);
+                    return ref_from_ptr(info.child, ptr.*, Context);
                 },
             }
         },
@@ -767,7 +767,7 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
             inline for (@typeInfo(T).@"enum".decls) |d| {
                 if (comptime std.mem.startsWith(u8, d.name, "zk_")) {
                     if (std.mem.eql(u8, name, d.name[3..])) {
-                        return make_ref(@TypeOf(@field(T, d.name)), &@field(T, d.name), Child_Context(Context, d.name));
+                        return ref_from_ptr(@TypeOf(@field(T, d.name)), &@field(T, d.name), Child_Context(Context, d.name));
                     }
                 }
             }
@@ -845,7 +845,7 @@ fn Array_VTable(comptime T: type, comptime Context: anytype) type {
     return struct {
         pub fn element(self: *const anyopaque, index: usize) Ref {
             const ptr: [*]const T = @alignCast(@ptrCast(self));
-            return make_ref(@TypeOf(ptr[index]), &ptr[index], Context);
+            return ref_from_ptr(@TypeOf(ptr[index]), &ptr[index], Context);
         }
     };
 }
@@ -856,7 +856,7 @@ fn Optional_VTable(comptime T: type, comptime Context: anytype) type {
             _ = index;
             const ptr: *const ?T = @alignCast(@ptrCast(self));
             if (ptr.*) |*value| {
-                return make_ref(@TypeOf(value.*), value, Context);
+                return ref_from_ptr(@TypeOf(value.*), value, Context);
             } else {
                 return .nil;
             }
@@ -877,21 +877,21 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
             const ordinal = @intFromEnum(ptr.*);
             inline for (0.., @typeInfo(T).@"union".fields) |i, f| {
                 if (i == ordinal and std.mem.eql(u8, name, f.name)) {
-                    return make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
+                    return ref_from_ptr(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
                 }
             }
 
             inline for (@typeInfo(T).@"union".decls) |d| {
                 if (comptime std.mem.startsWith(u8, d.name, "zk_")) {
                     if (std.mem.eql(u8, name, d.name[3..])) {
-                        return make_ref(@TypeOf(@field(T, d.name)), &@field(T, d.name), Child_Context(Context, d.name));
+                        return ref_from_ptr(@TypeOf(@field(T, d.name)), &@field(T, d.name), Child_Context(Context, d.name));
                     }
                 }
             }
 
             if (std.mem.eql(u8, name, "tag")) {
                 const Tag = std.meta.Tag(T);
-                return make_ref(Tag, &@as(Tag, ptr.*), Child_Context(Context, "tag"));
+                return ref_from_ptr(Tag, &@as(Tag, ptr.*), Child_Context(Context, "tag"));
             }
 
             return .nil;
@@ -910,7 +910,7 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
                     const ordinal = @intFromEnum(ptr.*);
                     inline for (0.., @typeInfo(T).@"union".fields) |i, f| {
                         if (i == ordinal) {
-                            const ref = make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
+                            const ref = ref_from_ptr(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
                             try print_ref(ref, writer);
                         }
                     }
@@ -928,9 +928,9 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
                 if (i == index) {
                     if (f.is_comptime) {
                         const val = @field(ptr.*, f.name);
-                        return make_ref(f.type, &val, Child_Context(Context, f.name));
+                        return ref_from_ptr(f.type, &val, Child_Context(Context, f.name));
                     } else {
-                        return make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
+                        return ref_from_ptr(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
                     }
                 }
             }
@@ -947,17 +947,21 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
             inline for (@typeInfo(T).@"struct".fields) |f| {
                 if (std.mem.eql(u8, name, f.name)) {
                     if (f.is_comptime) {
-                        const val = @field(ptr.*, f.name);
-                        return make_ref(f.type, &val, Child_Context(Context, f.name));
+                        if (f.type == comptime_int) {
+                            return number_ref(@as(usize, @field(ptr.*, f.name)));
+                        } else {
+                            const val = @field(ptr.*, f.name);
+                            return ref_from_ptr(f.type, &val, Child_Context(Context, f.name));
+                        }
                     } else {
-                        return make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
+                        return ref_from_ptr(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
                     }
                 }
             }
             inline for (@typeInfo(T).@"struct".decls) |d| {
                 if (comptime std.mem.startsWith(u8, d.name, "zk_")) {
                     if (std.mem.eql(u8, name, d.name[3..])) {
-                        return make_ref(@TypeOf(@field(T, d.name)), &@field(T, d.name), Child_Context(Context, d.name));
+                        return ref_from_ptr(@TypeOf(@field(T, d.name)), &@field(T, d.name), Child_Context(Context, d.name));
                     }
                 }
             }
@@ -971,11 +975,16 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
                 .pointer, .array => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
                 else => inline for (@typeInfo(T).@"struct".fields) |f| {
                     if (f.is_comptime) {
-                        const val = @field(ptr.*, f.name);
-                        const ref = make_ref(f.type, &val, Child_Context(Context, f.name));
-                        try print_ref(ref, writer);
+                        if (f.type == comptime_int) {
+                            const ref = number_ref(@as(usize, @field(ptr.*, f.name)));
+                            try print_ref(ref, writer);
+                        } else {
+                            const val = @field(ptr.*, f.name);
+                            const ref = ref_from_ptr(f.type, &val, Child_Context(Context, f.name));
+                            try print_ref(ref, writer);
+                        }
                     } else {
-                        const ref = make_ref(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
+                        const ref = ref_from_ptr(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
                         try print_ref(ref, writer);
                     }
                 },

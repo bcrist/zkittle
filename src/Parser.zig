@@ -13,12 +13,12 @@ resource_callback: *const fn (p: *Parser, id: []const u8) anyerror![]const u8,
 
 instructions: std.MultiArrayList(Instruction) = .{},
 fragments: std.StringArrayHashMapUnmanaged(Fragment) = .{},
-literal_data: std.ArrayListUnmanaged(u8) = .{},
+literal_data: std.ArrayList(u8) = .empty,
 literal_dedup: std.StringHashMapUnmanaged(Literal_Ref) = .{},
 ref_stack_depth: u32 = 0,
 reserved_stack_slots: u32 = 0,
 
-include_stack: std.ArrayListUnmanaged(Source) = .{},
+include_stack: std.ArrayList(Source) = .empty,
 
 token_kinds: []const Token.Kind = &.{},
 token_spans: [*]const []const u8 = @as([]const []const u8, &.{}).ptr,
