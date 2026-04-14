@@ -778,11 +778,14 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
-                .pointer => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
-                else => if (std.enums.tagName(T, ptr.*)) |name| {
-                    try writer.writeAll(name);
-                } else {
-                    try writer.print("({d})", .{ @intFromEnum(ptr.*) });
+                .pointer => try format_value(T, Context, ptr, writer),
+                else => {
+                    if (try maybe_format_value(T, "f", ptr, writer)) return;
+                    if (std.enums.tagName(T, ptr.*)) |name| {
+                        try writer.writeAll(name);
+                    } else {
+                        try writer.print("({d})", .{ @intFromEnum(ptr.*) });
+                    }
                 },
             }
         }
@@ -903,10 +906,9 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
                 .@"fn" => {
                     try Context(ptr.*, writer);
                 },
-                .pointer, .array => {
-                    try writer.print("{" ++ Context ++ "}", .{ ptr.* });
-                },
+                .pointer, .array => try format_value(T, Context, ptr, writer),
                 else => {
+                    if (try maybe_format_value(T, "f", ptr, writer)) return;
                     const ordinal = @intFromEnum(ptr.*);
                     inline for (0.., @typeInfo(T).@"union".fields) |i, f| {
                         if (i == ordinal) {
@@ -972,26 +974,66 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
-                .pointer, .array => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
-                else => inline for (@typeInfo(T).@"struct".fields) |f| {
-                    if (f.is_comptime) {
-                        if (f.type == comptime_int) {
-                            const ref = number_ref(@as(usize, @field(ptr.*, f.name)));
-                            try print_ref(ref, writer);
+                .pointer, .array => try format_value(T, Context, ptr, writer),
+                else => {
+                    if (try maybe_format_value(T, "f", ptr, writer)) return;
+                    inline for (@typeInfo(T).@"struct".fields) |f| {
+                        if (f.is_comptime) {
+                            if (f.type == comptime_int) {
+                                const ref = number_ref(@as(usize, @field(ptr.*, f.name)));
+                                try print_ref(ref, writer);
+                            } else {
+                                const val = @field(ptr.*, f.name);
+                                const ref = ref_from_ptr(f.type, &val, Child_Context(Context, f.name));
+                                try print_ref(ref, writer);
+                            }
                         } else {
-                            const val = @field(ptr.*, f.name);
-                            const ref = ref_from_ptr(f.type, &val, Child_Context(Context, f.name));
+                            const ref = ref_from_ptr(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
                             try print_ref(ref, writer);
                         }
-                    } else {
-                        const ref = ref_from_ptr(f.type, &@field(ptr.*, f.name), Child_Context(Context, f.name));
-                        try print_ref(ref, writer);
                     }
                 },
             }
         }
     };
 }
+
+fn format_value(comptime T: type, comptime fmt: []const u8, ptr: *const T, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    if (try maybe_format_value(T, fmt, ptr, writer)) return;
+    try writer.print("{" ++ fmt ++ "}", .{ ptr.* });
+}
+
+fn maybe_format_value(comptime T: type, comptime fmt: []const u8, ptr: *const T, writer: *std.Io.Writer) std.Io.Writer.Error!bool {
+    const method_name = comptime if (std.mem.eql(u8, fmt, "f")) "format" else "formatNumber";
+    const is_container = switch (@typeInfo(T)) {
+        .@"struct" => true,
+        .@"union" => true,
+        .@"enum" => true,
+        else => false,
+    };
+    if (is_container and @hasDecl(T, method_name)) {
+        switch (@typeInfo(@TypeOf(T.format))) {
+            .@"fn" => |info| {
+                if (info.params.len >= 2 and info.params[1].type.? == *std.Io.Writer) {
+                    switch (@typeInfo(info.params[0].type.?)) {
+                        .pointer => |ptrinfo| if (ptrinfo.child == T) {
+                            try writer.print("{" ++ fmt ++ "}", .{ ptr });
+                            return true;
+                        },
+                        else => if (info.params[0].type.? == T) {
+                            try writer.print("{" ++ fmt ++ "}", .{ ptr.* });
+                            return true;
+                        },
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+
 
 fn Child_Context(comptime Context: anytype, comptime field: []const u8) Child_Context_Type(Context, field) {
     if (@TypeOf(Context) == type and @typeInfo(Context) == .@"struct" and @hasDecl(Context, field)) {
