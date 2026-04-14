@@ -689,7 +689,7 @@ fn Bool_VTable(comptime Context: anytype) type {
             const ptr: *const bool = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
-                .pointer => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
+                .pointer => try writer.print(Context, .{ ptr.* }),
                 else => try writer.writeAll(if (ptr.*) "true" else "false"),
             }
         }
@@ -713,7 +713,7 @@ fn Int_VTable(comptime T: type, comptime Context: anytype) type {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
-                .pointer => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
+                .pointer => try writer.print(Context, .{ ptr.* }),
                 else => try writer.print("{d}", .{ ptr.* }),
             }
         }
@@ -737,7 +737,7 @@ fn Float_VTable(comptime T: type, comptime Context: anytype) type {
             const ptr: *const T = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
-                .pointer => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
+                .pointer => try writer.print(Context, .{ ptr.* }),
                 else => try writer.print("{d}", .{ ptr.* }),
             }
         }
@@ -780,7 +780,7 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
                 .@"fn" => try Context(ptr.*, writer),
                 .pointer => try format_value(T, Context, ptr, writer),
                 else => {
-                    if (try maybe_format_value(T, "f", ptr, writer)) return;
+                    if (try maybe_format_value(T, "{f}", ptr, writer)) return;
                     if (std.enums.tagName(T, ptr.*)) |name| {
                         try writer.writeAll(name);
                     } else {
@@ -811,7 +811,7 @@ fn String_VTable(comptime Context: anytype) type {
             const ptr: *const []const u8 = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
-                .pointer => try writer.print("{" ++ Context ++ "}", .{ ptr.* }),
+                .pointer => try writer.print(Context, .{ ptr.* }),
                 else => try writer.writeAll(ptr.*),
             }
         }
@@ -837,7 +837,7 @@ fn Array_String_VTable(comptime length: usize, comptime Context: anytype) type {
             const ptr: *const [length]u8 = @alignCast(@ptrCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr, writer),
-                .pointer => try writer.print("{" ++ Context ++ "}", .{ ptr }),
+                .pointer => try writer.print(Context, .{ ptr }),
                 else => try writer.writeAll(ptr),
             }
         }       
@@ -908,7 +908,7 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
                 },
                 .pointer, .array => try format_value(T, Context, ptr, writer),
                 else => {
-                    if (try maybe_format_value(T, "f", ptr, writer)) return;
+                    if (try maybe_format_value(T, "{f}", ptr, writer)) return;
                     const ordinal = @intFromEnum(ptr.*);
                     inline for (0.., @typeInfo(T).@"union".fields) |i, f| {
                         if (i == ordinal) {
@@ -976,7 +976,7 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
                 .@"fn" => try Context(ptr.*, writer),
                 .pointer, .array => try format_value(T, Context, ptr, writer),
                 else => {
-                    if (try maybe_format_value(T, "f", ptr, writer)) return;
+                    if (try maybe_format_value(T, "{f}", ptr, writer)) return;
                     inline for (@typeInfo(T).@"struct".fields) |f| {
                         if (f.is_comptime) {
                             if (f.type == comptime_int) {
@@ -1000,11 +1000,11 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
 
 fn format_value(comptime T: type, comptime fmt: []const u8, ptr: *const T, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     if (try maybe_format_value(T, fmt, ptr, writer)) return;
-    try writer.print("{" ++ fmt ++ "}", .{ ptr.* });
+    try writer.print(fmt, .{ ptr.* });
 }
 
 fn maybe_format_value(comptime T: type, comptime fmt: []const u8, ptr: *const T, writer: *std.Io.Writer) std.Io.Writer.Error!bool {
-    const method_name = comptime if (std.mem.eql(u8, fmt, "f")) "format" else "formatNumber";
+    const method_name = comptime if (std.mem.containsAtLeast(u8, fmt, 1, "{f}")) "format" else "formatNumber";
     const is_container = switch (@typeInfo(T)) {
         .@"struct" => true,
         .@"union" => true,
@@ -1017,11 +1017,11 @@ fn maybe_format_value(comptime T: type, comptime fmt: []const u8, ptr: *const T,
                 if (info.params.len >= 2 and info.params[1].type.? == *std.Io.Writer) {
                     switch (@typeInfo(info.params[0].type.?)) {
                         .pointer => |ptrinfo| if (ptrinfo.child == T) {
-                            try writer.print("{" ++ fmt ++ "}", .{ ptr });
+                            try writer.print(fmt, .{ ptr });
                             return true;
                         },
                         else => if (info.params[0].type.? == T) {
-                            try writer.print("{" ++ fmt ++ "}", .{ ptr.* });
+                            try writer.print(fmt, .{ ptr.* });
                             return true;
                         },
                     }
