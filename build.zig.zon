@@ -2,7 +2,7 @@
     .name = .zkittle,
     .fingerprint = 0x6050fc854cf8dd36,
     .version = "0.1.2",
-    .minimum_zig_version = "0.16.0-dev.2626+0e3c6514a",
+    .minimum_zig_version = "0.16.0",
     .paths = .{
         "src",
         "build.zig",
@@ -11,12 +11,12 @@
     },
     .dependencies = .{
         .console_helper = .{
-            .url = "git+https://codeberg.org/bcrist/zig-consolehelper?ref=zig-0.16#2dd909a4f774c9b95a893f80bb00c47c09560fed",
-            .hash = "console_helper-0.4.0-19g4E2FKAADz-6lhZD5Y9Pb_o-dg5QUv05_mtXP-r9if",
+            .url = "git+https://codeberg.org/bcrist/zig-consolehelper#dc0d79ebcedb6178c64e0afe54bffa67b3a79026",
+            .hash = "console_helper-0.4.0-19g4E05KAAAMg44f5EGJcxoINllXTnbU6bBS1kVaSK-r",
         },
         .percent_encoding = .{
-            .url = "git+https://codeberg.org/bcrist/zig-percent-encoding?ref=zig-0.16#7785d6afcefbc1bbfc633e628f1be58b19cc8371",
-            .hash = "percent_encoding-0.1.0-wAmwgCOBAABJq45HrRtYySG-YhaX81MaM6JPWBe7uivR",
+            .url = "git+https://codeberg.org/bcrist/zig-percent-encoding#6ace666491c83f5455d6ba90c915ddd15f917066",
+            .hash = "percent_encoding-0.1.0-wAmwgBCBAACSa6CXb_D7P9MXXwQq8DQqGY2fOafsCtSB",
         },
     },
 }
