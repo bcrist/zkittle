@@ -86,7 +86,7 @@ pub fn append(self: *Parser, source: Source) anyerror!void {
     }
 
     _ = self.include_stack.pop();
-    if (self.include_stack.getLastOrNull()) |s| {
+    if (self.include_stack.getLast()) |s| {
         self.token_kinds = s.tokens.kinds;
         self.token_spans = s.tokens.spans;
     }
@@ -160,7 +160,7 @@ fn parse_item(self: *Parser) !bool {
             const end = self.pc();
             const end_token = self.next_token;
             if (!self.try_token(.end)) {
-                try self.include_stack.getLast().report_error(self.diagnostic_writer, fragment_token, "No `~` token found to close fragment definition");
+                try self.report_error("No `~` token found to close fragment definition", .{ .token = fragment_token });
             }
 
             const spans = self.token_spans;
@@ -170,10 +170,10 @@ fn parse_item(self: *Parser) !bool {
             const gop = try self.fragments.getOrPut(self.gpa, fragment);
             if (gop.found_existing) {
                 if (gop.value_ptr.content.ptr != begin_ptr) {
-                    try self.include_stack.getLast().report_error(self.diagnostic_writer, fragment_token, "Ignoring fragment definition; it has already been defined elsewhere!");
+                    try self.report_error("Ignoring fragment definition; it has already been defined elsewhere!", .{ .token = fragment_token });
                 }
             } else {
-                const src = self.include_stack.getLast().source;
+                const src = self.include_stack.getLast().?.source;
                 const begin_offset = @intFromPtr(begin_ptr) - @intFromPtr(src.ptr);
                 const end_offset = @intFromPtr(spans[end_token].ptr) - @intFromPtr(src.ptr);
                 gop.key_ptr.* = fragment;
@@ -193,7 +193,7 @@ fn parse_item(self: *Parser) !bool {
             } else |err| {
                 var buf: [256]u8 = undefined;
                 const msg = std.fmt.bufPrint(&buf, "Could not find resource {s}: {s}", .{ id, @errorName(err) }) catch &buf;
-                try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token - 1, msg);
+                try self.report_error(msg, .{ .token = self.next_token - 1 });
             }
             return true;
         },
@@ -205,7 +205,7 @@ fn parse_item(self: *Parser) !bool {
             } else |err| {
                 var buf: [256]u8 = undefined;
                 const msg = std.fmt.bufPrint(&buf, "Failed to include {s}: {s}", .{ id, @errorName(err) }) catch &buf;
-                try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token - 1, msg);
+                try self.report_error(msg, .{ .token = self.next_token - 1 });
             }
             return true;
         },
@@ -214,7 +214,7 @@ fn parse_item(self: *Parser) !bool {
             if (try self.parse_expression()) {
                 try self.add_basic_instruction(.print_ref_raw);
             } else {
-                try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token, "Expected value reference");
+                try self.report_error("Expected value reference", .{});
             }
             return true;
         },
@@ -223,7 +223,7 @@ fn parse_item(self: *Parser) !bool {
             if (try self.parse_expression()) {
                 try self.add_basic_instruction(.print_ref_url);
             } else {
-                try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token, "Expected value reference");
+                try self.report_error("Expected value reference", .{});
             }
             return true;
         },
@@ -239,7 +239,7 @@ fn parse_item(self: *Parser) !bool {
                 try self.add_offset_instruction(.call_func, num_params);
                 self.reserved_stack_slots -= num_params + 1;
             } else {
-                try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token, "Expected function reference");
+                try self.report_error("Expected function reference", .{});
             }
             return true;
         },
@@ -278,9 +278,9 @@ fn parse_condition(self: *Parser) !bool {
 
     if (!self.try_token(.end)) {
         if (otherwise_token) |otherwise| {
-            try self.include_stack.getLast().report_error_2(self.diagnostic_writer, condition_token, "No `~` token found to close block", otherwise, "Found `;` here");
+            try self.report_error_2(condition_token, "No `~` token found to close block", otherwise, "Found `;` here");
         } else {
-            try self.include_stack.getLast().report_error(self.diagnostic_writer, condition_token, "No `~` token found to close block");
+            try self.report_error("No `~` token found to close block", .{ .token = condition_token });
         }
     }
     return true;
@@ -317,9 +317,9 @@ fn parse_within(self: *Parser) !bool {
 
     if (!self.try_token(.end)) {
         if (otherwise_token) |otherwise| {
-            try self.include_stack.getLast().report_error_2(self.diagnostic_writer, within_token, "No `~` token found to close block", otherwise, "Found `;` here");
+            try self.report_error_2(within_token, "No `~` token found to close block", otherwise, "Found `;` here");
         } else {
-            try self.include_stack.getLast().report_error(self.diagnostic_writer, within_token, "No `~` token found to close block");
+            try self.report_error("No `~` token found to close block", .{ .token = within_token });
         }
     }
     return true;
@@ -328,7 +328,7 @@ fn parse_within(self: *Parser) !bool {
 fn parse_expression(self: *Parser) !bool {
     if (self.try_token(.open_paren)) {
         if (!try self.parse_expression()) {
-            try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token, "Expected expression");
+            try self.report_error("Expected expression", .{});
             return error.InvalidTemplate;
         }
         try self.require_token(.close_paren);
@@ -342,7 +342,7 @@ fn parse_expression(self: *Parser) !bool {
             continue;
         }
 
-        try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token, "Expected field name, index, '#', or '@exists'");
+        try self.report_error("Expected field name, index, '#', or '@exists'", .{});
         return error.InvalidTemplate;
     }
     
@@ -414,7 +414,7 @@ fn parse_ref(self: *Parser) !bool {
                 try self.add_basic_instruction(.dupe_ref_0);
             }
             if (!try self.parse_field_or_index_or_count()) {
-                try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token, "Expected field name, index, or '#'");
+                try self.report_error("Expected field name, index, or '#'", .{});
                 return error.InvalidTemplate;
             }
             return true;
@@ -424,13 +424,13 @@ fn parse_ref(self: *Parser) !bool {
     if (parent_count + self.reserved_stack_slots > self.ref_stack_depth) {
         var buf: [128]u8 = undefined;
         const msg = try std.fmt.bufPrint(&buf, "Not enough parent data contexts; only {} exist", .{ self.ref_stack_depth });
-        try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token - 1, msg);
+        try self.report_error(msg, .{ .token = self.next_token - 1 });
         parent_count = self.ref_stack_depth - self.reserved_stack_slots;
     }
 
     try self.add_offset_instruction(.dupe_ref, parent_count + self.reserved_stack_slots);
     if (!try self.parse_field_or_index_or_count()) {
-        try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token, "Expected field name, index, or '#'");
+        try self.report_error("Expected field name, index, or '#'", .{});
         return error.InvalidTemplate;
     }
 
@@ -488,13 +488,13 @@ fn try_token(self: *Parser, kind: Token.Kind) bool {
 fn require_id_or_string_literal(self: *Parser) ![]const u8 {
     if (self.try_id()) |span| return span;
     if (self.try_string_literal()) |span| return span;
-    try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token, "Expected id or string literal");
+    try self.report_error("Expected id or string literal", .{});
     return error.InvalidTemplate;
 }
 
 fn require_token(self: *Parser, comptime kind: Token.Kind) !void {
     if (self.try_token(kind)) return;
-    try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token, "Expected " ++ @tagName(kind));
+    try self.report_error("Expected " ++ @tagName(kind), .{});
     return error.InvalidTemplate;
 }
 
@@ -754,7 +754,7 @@ fn finalize_skip_instruction(self: *Parser, instruction_address: u32, target_add
 
 fn check_and_increment_ref_stack(self: *Parser) !void {
     if (self.ref_stack_depth + 1 >= Template.max_stack_size) {
-        try self.include_stack.getLast().report_error(self.diagnostic_writer, self.next_token - 1, "Too many nested data contexts");
+        try self.report_error("Too many nested data contexts", .{ .token = self.next_token - 1 });
         return error.NestingTooDeep;
     }
     self.ref_stack_depth += 1;
@@ -773,6 +773,17 @@ fn intern_literal(self: *Parser, literal: []const u8) !Literal_Ref {
 
     try self.literal_dedup.put(self.gpa, literal, ref);
     return ref;
+}
+
+const Report_Error_Options = struct {
+    token: ?usize = null,
+};
+fn report_error(self: *Parser, msg: []const u8, options: Report_Error_Options) !void {
+    try self.include_stack.getLast().?.report_error(self.diagnostic_writer, options.token orelse self.next_token, msg);
+}
+
+fn report_error_2(self: *Parser, token1: usize, msg1: []const u8, token2: usize, msg2: []const u8) !void {
+    try self.include_stack.getLast().?.report_error_2(self.diagnostic_writer, token1, msg1, token2, msg2);
 }
 
 const Template = @import("Template.zig");

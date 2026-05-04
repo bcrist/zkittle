@@ -262,7 +262,7 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
 
     const opcodes = self.opcodes;
 
-    var variables: [max_stack_size + 1]usize = .{ 0 } ** (max_stack_size + 1);
+    var variables: [max_stack_size + 1]usize = @splat(0);
     var refs: [max_stack_size + 1]Ref = undefined;
     refs[0] = root_ref;
 
