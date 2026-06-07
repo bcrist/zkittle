@@ -1017,13 +1017,13 @@ fn maybe_format_value(comptime T: type, comptime fmt: []const u8, ptr: *const T,
     if (is_container and @hasDecl(T, method_name)) {
         switch (@typeInfo(@TypeOf(T.format))) {
             .@"fn" => |info| {
-                if (info.params.len >= 2 and info.params[1].type.? == *std.Io.Writer) {
-                    switch (@typeInfo(info.params[0].type.?)) {
+                if (info.param_types.len >= 2 and info.param_types[1].? == *std.Io.Writer) {
+                    switch (@typeInfo(info.param_types[0].?)) {
                         .pointer => |ptrinfo| if (ptrinfo.child == T) {
                             try writer.print(fmt, .{ ptr });
                             return true;
                         },
-                        else => if (info.params[0].type.? == T) {
+                        else => if (info.param_types[0].? == T) {
                             try writer.print(fmt, .{ ptr.* });
                             return true;
                         },
