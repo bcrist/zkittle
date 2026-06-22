@@ -75,6 +75,77 @@ pub const Ref = union (enum) {
     inline_value: Inline_Value,
     string_literal: []const u8,
     func: *const Extension_Function,
+
+    pub fn print(self: Ref, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self) {
+            .nil, .func => {},
+            .collection => |c| {
+                for (0..c.size) |i| {
+                    try c.element(c.data, i).print(writer);
+                }
+            },
+            .value => |v| {
+                try v.print(v.data, writer);
+            },
+            .inline_value => |v| {
+                try v.print(v.data, writer);
+            },
+            .string_literal => |v| {
+                try writer.writeAll(v);
+            },
+        }
+    }
+
+    pub fn to_number(self: Ref) usize {
+        return switch (self) {
+            .nil, .func => 0,
+            .collection => |c| c.size,
+            .value => |v| v.as_number(v.data),
+            .inline_value => |v| v.data,
+            .string_literal => |v| @intFromBool(v.len > 0),
+        };
+    }
+
+    fn lookup_field(self: Ref, name: []const u8, pc: usize) !Ref {
+        return switch (self) {
+            .nil, .func => .nil,
+            .collection => {
+                log.debug("Expected struct with field named {s}; found collection (pc={d})", .{ name, pc });
+                return .nil;
+            },
+            .value => |v| v.field(v.data, name),
+            .inline_value => |v| v.field(v.data, name),
+            .string_literal => |v| {
+                if (std.mem.eql(u8, name, "len")) {
+                    return number_ref(v.len);
+                } else {
+                    return .nil;
+                }
+            },
+        };
+    }
+
+    fn lookup_index(self: Ref, index: usize, pc: usize) !Ref {
+        switch (self) {
+            .nil, .func => return .nil,
+            .collection => |c| {
+                if (index < c.size) {
+                    return c.element(c.data, index);
+                } else {
+                    log.debug("Expected collection of size > {d}; found size {d} (pc={d})", .{ index, c.size, pc });
+                    return .nil;
+                }
+            },
+            .value, .inline_value, .string_literal => {
+                if (index == 0) {
+                    // This is needed for the "within" syntax
+                    return self;
+                }
+                log.debug("Expected collection of size > {d}; found value (pc={d})", .{ index, pc });
+                return .nil;
+            },
+        }
+    }
 };
 
 pub const Collection = struct {
@@ -85,16 +156,41 @@ pub const Collection = struct {
 
 pub const Value = struct {
     data: *const anyopaque,
-    as_number: *const fn (self: *const anyopaque) usize,
-    field: *const fn(self: *const anyopaque, name: []const u8) Ref,
-    print: *const fn(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void,
+    as_number: *const fn (self: *const anyopaque) usize = default_as_number,
+    field: *const fn(self: *const anyopaque, name: []const u8) Ref = default_field,
+    print: *const fn(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void = default_print,
+    
+    fn default_as_number(self: *const anyopaque) usize {
+        _ = self;
+        return 0;
+    }
+
+    fn default_field(self: *const anyopaque, name: []const u8) Ref {
+        _ = self;
+        _ = name;
+        return .nil;
+    }
+
+    fn default_print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("{*}", .{ self });
+    }
 };
 
 /// Instead of pointing to a number, just store it directly
 pub const Inline_Value = struct {
     data: usize,
-    field: *const fn(self: usize, name: []const u8) Ref,
-    print: *const fn(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void,
+    field: *const fn(self: usize, name: []const u8) Ref = default_field,
+    print: *const fn(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void = default_print,
+
+    fn default_field(self: usize, name: []const u8) Ref {
+        _ = self;
+        _ = name;
+        return .nil;
+    }
+
+    fn default_print(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("{}", .{ self });
+    }
 };
 
 opcodes: []const Opcode,
@@ -138,117 +234,8 @@ pub fn deinit(self: *Template, allocator: std.mem.Allocator) void {
 }
 
 fn literal(self: Template, pc: usize) []const u8 {
-    const ref = self.operands[pc].literal_ref();
-    return self.literal_data[ref.offset..][0..ref.length];
-}
-
-pub fn print_ref(ref: Ref, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-    switch (ref) {
-        .nil, .func => {},
-        .collection => |c| {
-            for (0..c.size) |i| {
-                try print_ref(c.element(c.data, i), writer);
-            }
-        },
-        .value => |v| {
-            try v.print(v.data, writer);
-        },
-        .inline_value => |v| {
-            try v.print(v.data, writer);
-        },
-        .string_literal => |v| {
-            try writer.writeAll(v);
-        },
-    }
-}
-
-pub fn ref_to_number(ref: Ref) usize {
-    return switch (ref) {
-        .nil, .func => 0,
-        .collection => |c| c.size,
-        .value => |v| v.as_number(v.data),
-        .inline_value => |v| v.data,
-        .string_literal => |v| @intFromBool(v.len > 0),
-    };
-}
-
-fn number_ref(n: usize) Ref {
-    const vtable = struct {
-        pub fn field(self: usize, name: []const u8) Ref {
-            _ = self;
-            _ = name;
-            return .nil;
-        }
-        pub fn print(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            try writer.print("{d}", .{ self });
-        }
-    };
-
-    return .{ .inline_value = .{
-        .data = n,
-        .field = vtable.field,
-        .print = vtable.print,
-    }};
-}
-
-fn bool_ref(b: bool) Ref {
-    const vtable = struct {
-        pub fn field(self: usize, name: []const u8) Ref {
-            _ = self;
-            _ = name;
-            return .nil;
-        }
-        pub fn print(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            try writer.print("{}", .{ self != 0 });
-        }
-    };
-
-    return .{ .inline_value = .{
-        .data = @intFromBool(b),
-        .field = vtable.field,
-        .print = vtable.print,
-    }};
-}
-
-fn lookup_field(ref: Ref, name: []const u8, pc: usize) !Ref {
-    return switch (ref) {
-        .nil, .func => .nil,
-        .collection => {
-            log.debug("Expected struct with field named {s}; found collection (pc={d})", .{ name, pc });
-            return .nil;
-        },
-        .value => |v| v.field(v.data, name),
-        .inline_value => |v| v.field(v.data, name),
-        .string_literal => |v| {
-            if (std.mem.eql(u8, name, "len")) {
-                return number_ref(v.len);
-            } else {
-                return .nil;
-            }
-        },
-    };
-}
-
-fn lookup_index(ref: Ref, index: usize, pc: usize) !Ref {
-    switch (ref) {
-        .nil, .func => return .nil,
-        .collection => |c| {
-            if (index < c.size) {
-                return c.element(c.data, index);
-            } else {
-                log.debug("Expected collection of size > {d}; found size {d} (pc={d})", .{ index, c.size, pc });
-                return .nil;
-            }
-        },
-        .value, .inline_value, .string_literal => {
-            if (index == 0) {
-                // This is needed for the "within" syntax
-                return ref;
-            }
-            log.debug("Expected collection of size > {d}; found value (pc={d})", .{ index, pc });
-            return .nil;
-        },
-    }
+    const literal_ref = self.operands[pc].literal_ref();
+    return self.literal_data[literal_ref.offset..][0..literal_ref.length];
 }
 
 pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn: *const escape.Fn, url_fn: *const escape.Fn) anyerror!void {
@@ -317,14 +304,14 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
                 log.debug("{d}: print_ref_raw: ref={d}", .{ pc, ref_sp });
-                try print_ref(refs[ref_sp], writer);
+                try refs[ref_sp].print(writer);
                 pc += 1;
             },
             .print_ref_escaped => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
                 log.debug("{d}: print_ref_escaped: ref={d}", .{ pc, ref_sp });
-                try print_ref(refs[ref_sp], escape_writer);
+                try refs[ref_sp].print(escape_writer);
                 try escape_writer.flush();
                 pc += 1;
             },
@@ -332,7 +319,7 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
                 log.debug("{d}: print_ref_url: ref={d}", .{ pc, ref_sp });
-                try print_ref(refs[ref_sp], url_escape_writer);
+                try refs[ref_sp].print(url_escape_writer);
                 try url_escape_writer.flush();
                 pc += 1;
             },
@@ -351,7 +338,7 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
                 if (ref_sp == 0) return error.InvalidTemplate;
                 const lit = self.literal(pc);
                 log.debug("{d}: field: ref={d} name={s}", .{ pc, ref_sp - 1, lit });
-                refs[ref_sp - 1] = try lookup_field(refs[ref_sp - 1], lit, pc);
+                refs[ref_sp - 1] = try refs[ref_sp - 1].lookup_field(lit, pc);
                 pc += 1;
             },
             .field_var_len => {
@@ -361,7 +348,7 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
                 const len = variables[variable_sp - 1];
                 const lit = self.literal_data[offset..][0..len];
                 log.debug("{d}: field_var_len: ref={d} name={s}", .{ pc, ref_sp - 1, lit });
-                refs[ref_sp - 1] = try lookup_field(refs[ref_sp - 1], lit, pc);
+                refs[ref_sp - 1] = try refs[ref_sp - 1].lookup_field(lit, pc);
                 variable_sp -= 1;
                 pc += 1;
             },
@@ -371,9 +358,9 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
                 log.debug("{d}: push_field: ref={d} name={s}", .{ pc, ref_sp, lit });
                 var i = ref_sp;
                 while (i > 0) : (i -= 1) {
-                    const ref = try lookup_field(refs[i - 1], lit, pc);
-                    if (ref != .nil) {
-                        refs[ref_sp] = ref;
+                    const field_ref = try refs[i - 1].lookup_field(lit, pc);
+                    if (field_ref != .nil) {
+                        refs[ref_sp] = field_ref;
                         break;
                     }
                 } else {
@@ -391,9 +378,9 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
                 log.debug("{d}: push_field_var_len: ref={d} name={s}", .{ pc, ref_sp, lit });
                 var i = ref_sp;
                 while (i > 0) : (i -= 1) {
-                    const ref = try lookup_field(refs[i - 1], lit, pc);
-                    if (ref != .nil) {
-                        refs[ref_sp] = ref;
+                    const field_ref = try refs[i - 1].lookup_field(lit, pc);
+                    if (field_ref != .nil) {
+                        refs[ref_sp] = field_ref;
                         break;
                     }
                 } else {
@@ -407,13 +394,13 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
                 if (ref_sp == 0) return error.InvalidTemplate;
                 const index = self.operands[pc].offset;
                 log.debug("{d}: index: ref={d} [{d}]", .{ pc, ref_sp - 1, index });
-                refs[ref_sp - 1] = try lookup_index(refs[ref_sp - 1], index, pc);
+                refs[ref_sp - 1] = try refs[ref_sp - 1].lookup_index(index, pc);
                 pc += 1;
             },
             .as_number => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 ref_sp -= 1;
-                const number = ref_to_number(refs[ref_sp]);
+                const number = refs[ref_sp].to_number();
                 log.debug("{d}: as_number: ref={d} var={d} num={d}", .{ pc, ref_sp, variable_sp, number });
                 variables[variable_sp] = number;
                 variable_sp += 1;
@@ -472,7 +459,7 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
                 pc += offset + 1;
             },
             .begin_loop => {
-                variables[variable_sp] = ref_to_number(refs[ref_sp - 1]);
+                variables[variable_sp] = refs[ref_sp - 1].to_number();
                 variables[variable_sp + 1] = 0;
                 log.debug("{d}: begin_loop: ref={d} var={d} [{d}] var={d} [0]", .{ pc, ref_sp - 1, variable_sp, variables[variable_sp], variable_sp + 1 });
                 variable_sp += 2;
@@ -502,7 +489,7 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
                 if (ref_sp == 0) return error.InvalidTemplate;
                 if (variable_sp == 0) return error.InvalidTemplate;
                 log.debug("{d}: dupe_ref_0_indexed: ref={d} var={d} [{d}]", .{ pc, ref_sp - 1, variable_sp - 1, variables[variable_sp - 1] });
-                refs[ref_sp] = try lookup_index(refs[ref_sp - 1], variables[variable_sp - 1], pc);
+                refs[ref_sp] = try refs[ref_sp - 1].lookup_index(variables[variable_sp - 1], pc);
                 ref_sp += 1;
                 pc += 1;
             },
@@ -551,6 +538,51 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
             },
         }
     }
+}
+
+pub fn number_ref(n: usize) Ref {
+    const vtable = struct {
+        pub fn field(self: usize, name: []const u8) Ref {
+            _ = self;
+            _ = name;
+            return .nil;
+        }
+        pub fn print(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("{d}", .{ self });
+        }
+    };
+
+    return .{ .inline_value = .{
+        .data = n,
+        .field = vtable.field,
+        .print = vtable.print,
+    }};
+}
+
+pub fn bool_ref(b: bool) Ref {
+    const vtable = struct {
+        pub fn field(self: usize, name: []const u8) Ref {
+            _ = self;
+            _ = name;
+            return .nil;
+        }
+        pub fn print(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("{}", .{ self != 0 });
+        }
+    };
+
+    return .{ .inline_value = .{
+        .data = @intFromBool(b),
+        .field = vtable.field,
+        .print = vtable.print,
+    }};
+}
+
+pub const Ref_Options = struct {
+    Context: type = struct {},
+};
+pub fn ref(v: anytype, comptime options: Ref_Options) Ref {
+    return ref_from_ptr(@TypeOf(v), &v, options.Context);
 }
 
 pub fn ref_from_ptr(comptime T: type, ptr: *const T, comptime Context: anytype) Ref {
@@ -634,6 +666,7 @@ pub fn ref_from_ptr(comptime T: type, ptr: *const T, comptime Context: anytype) 
             .element = Optional_VTable(info.child, Context).element,
         }},
         .@"union" => |info| {
+            if (T == Ref) return ptr.*;
             if (info.tag_type == null) @compileError("Unions must be tagged");
             return .{ .value = .{
                 .data = ptr,
@@ -649,6 +682,12 @@ pub fn ref_from_ptr(comptime T: type, ptr: *const T, comptime Context: anytype) 
                     .size = info.field_names.len,
                     .element = Struct_VTable(T, Context).tuple_element,
                 }};
+            } else if (T == Collection) {
+                return .{ .collection = ptr.* };
+            } else if (T == Value) {
+                return .{ .value = ptr.* };
+            } else if (T == Inline_Value) {
+                return .{ .inline_value = ptr.* };
             } else {
                 return .{ .value = .{
                     .data = ptr,
@@ -914,8 +953,8 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
                     const ordinal = @intFromEnum(ptr.*);
                     inline for (0.., union_info.field_names, union_info.field_types) |i, field_name, field_type| {
                         if (i == ordinal) {
-                            const ref = ref_from_ptr(field_type, &@field(ptr.*, field_name), Child_Context(Context, field_name));
-                            try print_ref(ref, writer);
+                            const payload_ref = ref_from_ptr(field_type, &@field(ptr.*, field_name), Child_Context(Context, field_name));
+                            try payload_ref.print(writer);
                         }
                     }
                 },
@@ -983,16 +1022,16 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
                     inline for (struct_info.field_names, struct_info.field_types, struct_info.field_attrs) |field_name, field_type, field_attrs| {
                         if (field_attrs.@"comptime") {
                             if (field_type == comptime_int) {
-                                const ref = number_ref(@as(usize, @field(ptr.*, field_name)));
-                                try print_ref(ref, writer);
+                                const field_ref = number_ref(@as(usize, @field(ptr.*, field_name)));
+                                try field_ref.print(writer);
                             } else {
                                 const val = @field(ptr.*, field_name);
-                                const ref = ref_from_ptr(field_type, &val, Child_Context(Context, field_name));
-                                try print_ref(ref, writer);
+                                const field_ref = ref_from_ptr(field_type, &val, Child_Context(Context, field_name));
+                                try field_ref.print(writer);
                             }
                         } else {
-                            const ref = ref_from_ptr(field_type, &@field(ptr.*, field_name), Child_Context(Context, field_name));
-                            try print_ref(ref, writer);
+                            const field_ref = ref_from_ptr(field_type, &@field(ptr.*, field_name), Child_Context(Context, field_name));
+                            try field_ref.print(writer);
                         }
                     }
                 },
