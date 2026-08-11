@@ -1,8 +1,8 @@
 .{
     .name = .zkittle,
     .fingerprint = 0x6050fc854cf8dd36,
-    .version = "0.2.3",
-    .minimum_zig_version = "0.17.0-dev.812+5434f85c4",
+    .version = "0.2.4",
+    .minimum_zig_version = "0.17.0-dev.1732+91c8116b2",
     .paths = .{
         "src",
         "build.zig",

@@ -86,7 +86,7 @@ pub fn append(self: *Parser, source: Source) anyerror!void {
     }
 
     _ = self.include_stack.pop();
-    if (self.include_stack.getLast()) |s| {
+    if (self.include_stack.last()) |s| {
         self.token_kinds = s.tokens.kinds;
         self.token_spans = s.tokens.spans;
     }
@@ -173,7 +173,7 @@ fn parse_item(self: *Parser) !bool {
                     try self.report_error("Ignoring fragment definition; it has already been defined elsewhere!", .{ .token = fragment_token });
                 }
             } else {
-                const src = self.include_stack.getLast().?.source;
+                const src = self.include_stack.last().?.source;
                 const begin_offset = @intFromPtr(begin_ptr) - @intFromPtr(src.ptr);
                 const end_offset = @intFromPtr(spans[end_token].ptr) - @intFromPtr(src.ptr);
                 gop.key_ptr.* = fragment;
@@ -779,11 +779,11 @@ const Report_Error_Options = struct {
     token: ?usize = null,
 };
 fn report_error(self: *Parser, msg: []const u8, options: Report_Error_Options) !void {
-    try self.include_stack.getLast().?.report_error(self.diagnostic_writer, options.token orelse self.next_token, msg);
+    try self.include_stack.last().?.report_error(self.diagnostic_writer, options.token orelse self.next_token, msg);
 }
 
 fn report_error_2(self: *Parser, token1: usize, msg1: []const u8, token2: usize, msg2: []const u8) !void {
-    try self.include_stack.getLast().?.report_error_2(self.diagnostic_writer, token1, msg1, token2, msg2);
+    try self.include_stack.last().?.report_error_2(self.diagnostic_writer, token1, msg1, token2, msg2);
 }
 
 const Template = @import("Template.zig");
