@@ -2,7 +2,7 @@
     .name = .zkittle,
     .fingerprint = 0x6050fc854cf8dd36,
     .version = "0.2.5",
-    .minimum_zig_version = "0.17.0-dev.1732+91c8116b2",
+    .minimum_zig_version = "0.17.0",
     .paths = .{
         "src",
         "build.zig",
@@ -11,11 +11,11 @@
     },
     .dependencies = .{
         .console_helper = .{
-            .url = "git+https://codeberg.org/bcrist/zig-consolehelper?ref=zig-master#446cf88cc8b3551a56643954bf120c6701b48554",
+            .url = "git+https://codeberg.org/bcrist/zig-consolehelper#5e62f78e284b6c37e0a6e8e6d3526e2da6312b0d",
             .hash = "console_helper-0.4.2-19g4E2VKAAADECN2nMmLE7dQUWXXVMq38EZeVAWxeoWL",
         },
         .percent_encoding = .{
-            .url = "git+https://codeberg.org/bcrist/zig-percent-encoding#6ace666491c83f5455d6ba90c915ddd15f917066",
+            .url = "git+https://codeberg.org/bcrist/zig-percent-encoding#652a1aa9c7b0f36c4a94a3240227da518ef4c331",
             .hash = "percent_encoding-0.1.0-wAmwgBCBAACSa6CXb_D7P9MXXwQq8DQqGY2fOafsCtSB",
         },
     },
