@@ -126,3 +126,11 @@ The name is pronounced like "skittle," not "zee kittle".
     operator.  This doesn't affect how the overall template is rendered, but allows you to access
     the sub-template by name from code.  See https://htmx.org/essays/template-fragments/ for more
     information about how this technique might be useful.
+
+## Branches
+| Zig Version  | Recommended Branch |
+|--------------|--------------------|
+| 0.18.0-dev.* | zig-master         |
+| 0.17.0       | main               |
+| 0.16.0       | zig-0.16           |
+| 0.15.2       | zig-0.15           |
