@@ -972,6 +972,24 @@ test "render" {
         \\a;sldkfj
         \\
     );
+
+    const value: Template.Value = .{
+        .data = &.{},
+        .field = value_field,
+    };
+
+    try test_template(
+        \\\\asdf
+        \\\\sdfhh
+        \\
+        , value,
+        \\asdfsdfhh
+    );
+}
+
+fn value_field(self: *const anyopaque, name: []const u8) Template.Ref {
+    _ = self;
+    return Template.ref(name, .{}); // could just use `.{ .string_literal = name }` but this is just to test
 }
 
 fn print_ok(root_ref: Template.Ref, args: []const Template.Ref, writer: *std.Io.Writer, escape_writer: *std.Io.Writer, url_escape_writer: *std.Io.Writer) std.Io.Writer.Error!void {
@@ -987,7 +1005,7 @@ fn print_args(root_ref: Template.Ref, args: []const Template.Ref, writer: *std.I
     _ = writer;
     _ = url_escape_writer;
     for (args) |ref| {
-        try Template.print_ref(ref, escape_writer);
+        try ref.print(escape_writer);
     }
     try escape_writer.flush();
 }
