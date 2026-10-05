@@ -1,4 +1,3 @@
-
 test "lexing" {
     try test_lex(" ",
         \\literal: 
@@ -13,13 +12,14 @@ test "lexing" {
     try test_lex(
         \\a b c d
         \\fffff
-        ,
+    ,
         \\literal:a b c d\nfffff
         \\eof:
         \\
     );
-    try test_lex(\\asdf \\ //fasdf
-        ,
+    try test_lex(
+        \\asdf \\ //fasdf
+    ,
         \\literal:asdf 
         \\literal:fasdf
         \\eof:
@@ -29,14 +29,15 @@ test "lexing" {
         \\\\asdf //
         \\\\
         \\\\
-        ,
+    ,
         \\id:asdf
         \\literal:\n
         \\eof:
         \\
     );
-    try test_lex(\\asdf \\ a
-        ,
+    try test_lex(
+        \\asdf \\ a
+    ,
         \\literal:asdf 
         \\id:a
         \\eof:
@@ -45,7 +46,7 @@ test "lexing" {
     try test_lex(
         \\asdf \\ 
         \\fff
-        ,
+    ,
         \\literal:asdf 
         \\literal:fff
         \\eof:
@@ -57,14 +58,14 @@ test "lexing" {
         \\\\  
         \\\\
         \\fff
-        ,
+    ,
         \\literal:fff
         \\eof:
         \\
     );
     try test_lex(
         \\\\ ^^a.b.c.*
-        ,
+    ,
         \\parent:^
         \\parent:^
         \\id:a
@@ -79,7 +80,7 @@ test "lexing" {
     );
     try test_lex(
         \\\\ ^ a . b : ;~?#%|/
-        ,
+    ,
         \\parent:^
         \\id:a
         \\child:.
@@ -101,7 +102,7 @@ test "lexing" {
         \\\\@rawwww @include
         \\\\ @resource @index
         \\\\ @INDEX index @exists
-        ,
+    ,
         \\kw_raw:@raw
         \\kw_url:@url
         \\invalid:@rawwww
@@ -116,7 +117,7 @@ test "lexing" {
     );
     try test_lex(
         \\\\ 123 13 Abcdef123 a;sldkfj
-        ,
+    ,
         \\number:123
         \\number:13
         \\id:Abcdef123
@@ -128,14 +129,14 @@ test "lexing" {
     );
     try test_lex(
         \\\\ "a b c"
-        ,
+    ,
         \\string_literal:a b c
         \\eof:
         \\
     );
-        try test_lex(
+    try test_lex(
         \\\\ *."a b c"
-        ,
+    ,
         \\self:*
         \\child:.
         \\string_literal:a b c
@@ -146,7 +147,7 @@ test "lexing" {
     try test_lex(
         \\\\ $ "a b c"
         \\\\ asdf
-        ,
+    ,
         \\id:asdf
         \\eof:
         \\
@@ -154,7 +155,7 @@ test "lexing" {
 
     try test_lex(
         \\\\ $ "a b c" // asdf
-        ,
+    ,
         \\literal: asdf
         \\eof:
         \\
@@ -162,7 +163,7 @@ test "lexing" {
 
     try test_lex(
         \\\\ (abc).d
-        ,
+    ,
         \\open_paren:(
         \\id:abc
         \\close_paren:)
@@ -174,7 +175,7 @@ test "lexing" {
 
     try test_lex(
         \\\\abc:def
-        ,
+    ,
         \\id:abc
         \\fn_call::
         \\id:def
@@ -197,11 +198,10 @@ fn test_lex(src: []const u8, expected: []const u8) !void {
     try std.testing.expectEqualStrings(expected, temp.written());
 }
 
-
 test "parsing" {
     try test_parse(
         \\Hellorld!
-        ,
+    ,
         \\print_literal: "Hellorld!"
         \\
     );
@@ -209,7 +209,7 @@ test "parsing" {
     try test_parse(
         \\Hellorld!
         \\Multiple lines!
-        ,
+    ,
         \\print_literal: "Hellorld!\nMultiple lines!"
         \\
     );
@@ -218,7 +218,7 @@ test "parsing" {
         \\Hellorld!  This is a long line.
         \\Hellorld!  This is a long line.
         \\Hellorld again!!!
-        ,
+    ,
         \\print_literal: "Hellorld!  This is a long line.\n"
         \\print_literal: "Hellorld!  This is a long line.\nHellorld again!!!"
         \\
@@ -235,7 +235,7 @@ test "parsing" {
         \\BBBBBBBBBBBBBBBBBBBB
         \\CCCCCCCCCCCCCCCCCCCC
         \\
-        ,
+    ,
         \\print_literal: "AAAAAAAAAAAAAAAAAAAA\nBBBBBBBBBBBBBBBBBBBB\nCCCCCCCCCCCCCCCCCCCC\n"
         \\print_literal: "BBBBBBBBBBBBBBBBBBBB\nCCCCCCCCCCCCCCCCCCCC\n"
         \\print_literal: "AAAAAAAAAAAAAAAAAAAA\n"
@@ -245,7 +245,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ whatever
-        ,
+    ,
         \\push_field: "whatever"
         \\print_ref_escaped
         \\
@@ -257,7 +257,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ @count
-        ,
+    ,
         \\dupe_ref_0
         \\as_number
         \\number_to_ref
@@ -268,7 +268,7 @@ test "parsing" {
     try test_parse(
         \\\\ @resource "test.htm"
         \\\\ @include whatever
-        ,
+    ,
         \\print_literal: "test resource content"
         \\print_literal: "test include content"
         \\push_field: "included_field"
@@ -278,7 +278,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ @raw ax."something here".@count.1.c
-        ,
+    ,
         \\push_field: "ax"
         \\field: "something here"
         \\as_number
@@ -291,7 +291,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ @url ax."something here".@count.1.c
-        ,
+    ,
         \\push_field: "ax"
         \\field: "something here"
         \\as_number
@@ -304,7 +304,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ @index.@exists
-        ,
+    ,
         \\push_loop_index
         \\is_ref_nonnil
         \\print_ref_escaped
@@ -313,7 +313,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ something? 1 ~
-        ,
+    ,
         \\push_field: "something"
         \\as_number
         \\pop_and_skip_if_zero: 3
@@ -327,7 +327,7 @@ test "parsing" {
         \\\\ something?
         \\abc
         \\\\ ; whatever ~
-        ,
+    ,
         \\push_field: "something"
         \\as_number
         \\pop_and_skip_if_zero: 2
@@ -342,7 +342,7 @@ test "parsing" {
         \\\\ *.something?
         \\abc
         \\\\ ; whatever ~
-        ,
+    ,
         \\dupe_ref_0
         \\field: "something"
         \\as_number
@@ -372,7 +372,7 @@ test "parsing" {
         \\\\ ~
         \\8
         \\
-        ,
+    ,
         \\push_field: "a"
         \\as_number
         \\pop_and_skip_if_zero: 7
@@ -399,7 +399,7 @@ test "parsing" {
         \\\\ something:
         \\abc
         \\\\ ; whatever ~
-        ,
+    ,
         \\push_field: "something"
         \\begin_loop
         \\skip_if_equal: 6
@@ -433,7 +433,7 @@ test "parsing" {
         \\\\ ~
         \\8
         \\
-        ,
+    ,
         \\push_field: "a"
         \\begin_loop
         \\skip_if_equal: 15
@@ -472,7 +472,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ something: ^@count ^^something.0 ~
-        ,
+    ,
         \\push_field: "something"
         \\begin_loop
         \\skip_if_equal: 11
@@ -493,14 +493,14 @@ test "parsing" {
 
     try test_parse(
         \\\\$ asdfasdfasdf // asdf
-        ,
+    ,
         \\print_literal: " asdf"
         \\
     );
     try test_parse(
         \\\\$ asdfasdfasdf
         \\\\ gg // asdf
-        ,
+    ,
         \\push_field: "gg"
         \\print_ref_escaped
         \\print_literal: " asdf"
@@ -510,7 +510,7 @@ test "parsing" {
     try test_parse(
         \\\\ hello: * //
         \\\\ ~
-        ,
+    ,
         \\push_field: "hello"
         \\begin_loop
         \\skip_if_equal: 6
@@ -526,7 +526,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ a | b
-        ,
+    ,
         \\push_field: "a"
         \\dupe_ref_0
         \\is_ref_nonnil
@@ -540,7 +540,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ a | b | c
-        ,
+    ,
         \\push_field: "a"
         \\dupe_ref_0
         \\is_ref_nonnil
@@ -558,10 +558,9 @@ test "parsing" {
         \\
     );
 
-    
     try test_parse(
         \\\\ a / b
-        ,
+    ,
         \\push_field: "a"
         \\dupe_ref_0
         \\as_number
@@ -574,7 +573,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ a / b | c
-        ,
+    ,
         \\push_field: "a"
         \\dupe_ref_0
         \\as_number
@@ -593,7 +592,7 @@ test "parsing" {
 
     try test_parse(
         \\\\ (a|b).@exists
-        ,
+    ,
         \\push_field: "a"
         \\dupe_ref_0
         \\is_ref_nonnil
@@ -611,7 +610,7 @@ test "parsing" {
         \\verylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstring1
         \\verylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstring2
         \\verylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstringverylongstring3
-        ,
+    ,
         \\push_var: 679
         \\print_literal_var_len: 0
         \\
@@ -619,14 +618,14 @@ test "parsing" {
 
     try test_parse(
         \\\\:func 
-        ,
+    ,
         \\push_field: "func"
         \\call_func: 0
         \\
     );
     try test_parse(
         \\\\:(a|b) param1 param2
-        ,
+    ,
         \\push_field: "a"
         \\dupe_ref_0
         \\is_ref_nonnil
@@ -643,7 +642,7 @@ test "parsing" {
     );
     try test_parse(
         \\\\:func @index * @index a."asdf"
-        ,
+    ,
         \\push_field: "func"
         \\push_loop_index
         \\dupe_ref: 2
@@ -656,7 +655,7 @@ test "parsing" {
     );
     try test_parse(
         \\\\each: :func @index xyz ~
-        ,
+    ,
         \\push_field: "each"
         \\begin_loop
         \\skip_if_equal: 8
@@ -683,9 +682,9 @@ fn test_include_callback(p: *Parser, id: []const u8) anyerror!Source {
         return source;
     }
 
-    const src_str = 
+    const src_str =
         \\test include content\\ included_field
-        ;
+    ;
 
     test_include = try Source.init_buf(std.heap.page_allocator, "included_source", src_str);
 
@@ -731,19 +730,12 @@ fn test_parse(source_str: []const u8, expected: []const u8) !void {
             .push_literal, .print_literal, .field, .push_field => {
                 const ref = operands.literal_ref();
                 const span = template.literal_data[ref.offset..][0..ref.length];
-                try writer.print(": \"{f}\"", .{ std.zig.fmtString(span) });
+                try writer.print(": \"{f}\"", .{std.zig.fmtString(span)});
             },
-            .push_literal_var_len, .print_literal_var_len, .field_var_len, .push_field_var_len,
-            .skip_if_equal, .increment_and_retry_if_less,
-            .index, .dupe_ref, .skip, .push_var, .call_func,
-            .pop_and_skip_if_zero, .pop_and_skip_if_nonzero => {
-                try writer.print(": {d}", .{ operands.offset });
+            .push_literal_var_len, .print_literal_var_len, .field_var_len, .push_field_var_len, .skip_if_equal, .increment_and_retry_if_less, .index, .dupe_ref, .skip, .push_var, .call_func, .pop_and_skip_if_zero, .pop_and_skip_if_nonzero => {
+                try writer.print(": {d}", .{operands.offset});
             },
-            .print_ref_raw, .print_ref_escaped, .print_ref_url, .push_loop_index,
-            .begin_loop, .end_loop, .dupe_ref_0_indexed, .pop_ref,
-            .as_number, .number_to_ref, .dupe_ref_0, .is_ref_nonnil,
-            .push_nil => {},
-
+            .print_ref_raw, .print_ref_escaped, .print_ref_url, .push_loop_index, .begin_loop, .end_loop, .dupe_ref_0_indexed, .pop_ref, .as_number, .number_to_ref, .dupe_ref_0, .is_ref_nonnil, .push_nil => {},
         }
         try writer.writeByte('\n');
     }
@@ -772,7 +764,7 @@ test "render" {
     try test_template(
         \\abcd
         \\asdf
-        , {},
+    , {},
         \\abcd
         \\asdf
     );
@@ -781,27 +773,27 @@ test "render" {
         \\\\//abcd\\//
         \\\\//asdf\\
         \\
-        , {},
+    , {},
         \\abcd
         \\asdf
     );
 
     try test_template(
         \\\\ *
-        , .{ .a = @as(u16, 1), .span = "asdfasdf" },
+    , .{ .a = @as(u16, 1), .span = "asdfasdf" },
         \\1asdfasdf
     );
 
     try test_template(
         \\\\ hello: * //
         \\\\ ~
-        , .{ .hello = .{ "abc", "asdfasdf" } },
+    , .{ .hello = .{ "abc", "asdfasdf" } },
         \\abc
         \\asdfasdf
         \\
     );
 
-    const My_Union = union (enum) {
+    const My_Union = union(enum) {
         a: u32,
         b: i16,
         c: []const u8,
@@ -812,7 +804,7 @@ test "render" {
         \\b:\\b//
         \\c:\\c//
         \\
-        , @as(My_Union, .{ .c = "1234" }),
+    , @as(My_Union, .{ .c = "1234" }),
         \\a:
         \\b:
         \\c:1234
@@ -822,7 +814,7 @@ test "render" {
     try test_template(
         \\\\ hello: outer //
         \\\\ ~
-        , .{ .hello = .{ "abc", "asdfasdf" }, .outer = "asdf" },
+    , .{ .hello = .{ "abc", "asdfasdf" }, .outer = "asdf" },
         \\asdf
         \\asdf
         \\
@@ -830,118 +822,120 @@ test "render" {
 
     try test_template(
         \\\\ @index
-        , {},
+    , {},
         \\
     );
 
     try test_template(
         \\\\ @index.@exists
-        , {},
+    , {},
         \\false
     );
 
     try test_template(
         \\\\ @index | index
-        , .{ .index = 5 },
+    , .{ .index = 5 },
         \\5
     );
 
     try test_template(
         \\\\ a / b
-        , .{ .a = "", .b = "XYZ" },
+    , .{ .a = "", .b = "XYZ" },
         \\XYZ
     );
 
     try test_template(
         \\\\ a / b / c
-        , .{ .a = null, .b = "XYZ", .c = 123 },
+    , .{ .a = null, .b = "XYZ", .c = 123 },
         \\XYZ
     );
 
     try test_template(
         \\\\ @index | index1 | index2
-        , .{ .index1 = 5, .index2 = 10 },
+    , .{ .index1 = 5, .index2 = 10 },
         \\5
     );
 
     try test_template(
         \\\\ html
-        , .{ .html = "<html></html>" },
+    , .{ .html = "<html></html>" },
         \\&lt;html&gt;&lt;/html&gt;
     );
 
     try test_template(
         \\\\ @raw html
-        , .{ .html = "<html></html>" },
+    , .{ .html = "<html></html>" },
         \\<html></html>
     );
 
     try test_template(
         \\\\ @url html
-        , .{ .html = "<html></html>" },
+    , .{ .html = "<html></html>" },
         \\%3Chtml%3E%3C%2Fhtml%3E
     );
 
     try test_template(
         \\\\ (a|b).@exists? //1\\~
-        , .{ .a = undefined, .b = undefined },
+    , .{ .a = undefined, .b = undefined },
         \\
     );
 
     try test_template(
         \\\\ (a|b).@exists? //1\\~
-        , .{ .a = undefined, .b = null },
+    , .{ .a = undefined, .b = null },
         \\1
     );
 
     try test_template(
         \\\\ "asdf".len
-        , .{},
+    , .{},
         \\4
     );
     try test_template(
         \\\\ asdf.len
-        , .{ .asdf = "12" },
+    , .{ .asdf = "12" },
         \\2
     );
 
     try test_template(
         \\\\ @count
-        , .{ .asdf = "12", .jkl = "34" },
+    , .{ .asdf = "12", .jkl = "34" },
         \\1
     );
 
     try test_template(
         \\\\ :func
-        , .{ .func = &print_ok },
+    , .{ .func = &print_ok },
         \\ok
     );
 
     try test_template(
         \\\\ :func "ignored param"
-        , (struct { pub const zk_func = print_ok; }) {},
+    , (struct {
+        pub const zk_func = print_ok;
+    }){},
         \\ok
     );
 
     try test_template(
         \\\\ :func "a" "b" a
-        , .{ .a = "Hellorld!", .func = &print_args },
+    , .{ .a = "Hellorld!", .func = &print_args },
         \\abHellorld!
     );
 
     try test_template(
         \\\\items: :func * * ~
-        , .{ .items = &.{ "Hello", "World!" }, .func = &print_args },
+    , .{ .items = &.{ "Hello", "World!" }, .func = &print_args },
         \\HelloHelloWorld!World!
     );
 
     try test_template(
         \\\\items: :func len ~
-        , .{ .items = &.{ "Hello", "World!" }, .func = &print_args },
+    , .{ .items = &.{ "Hello", "World!" }, .func = &print_args },
         \\56
     );
 
-    const template_with_frags = 
+    const template_with_frags =
         \\XYZ
         \\\\ #some_fragment_name
         \\a b c
@@ -951,7 +945,7 @@ test "render" {
         \\\\~
         \\asdf
         \\\\ ~
-        ;
+    ;
 
     try test_template(template_with_frags, .{ .a = "1234" },
         \\XYZ
@@ -982,7 +976,7 @@ test "render" {
         \\\\asdf
         \\\\sdfhh
         \\
-        , value,
+    , value,
         \\asdfsdfhh
     );
 }

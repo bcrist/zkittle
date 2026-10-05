@@ -1,4 +1,3 @@
-
 pub fn none(str: []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
     try w.writeAll(str);
 }
@@ -8,7 +7,7 @@ pub fn html(str: []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
     while (iter.next()) |chunk| {
         try w.writeAll(chunk);
         if (iter.index) |i| {
-            try w.writeAll(switch (iter.buffer[i-1]) {
+            try w.writeAll(switch (iter.buffer[i - 1]) {
                 '&' => "&amp;",
                 '<' => "&lt;",
                 '>' => "&gt;",
@@ -27,7 +26,7 @@ pub fn url(str: []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
     }
 }
 
-pub const Fn = fn(str: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void;
+pub const Fn = fn (str: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void;
 
 pub const Writer = struct {
     interface: std.Io.Writer,
@@ -67,7 +66,7 @@ pub const Writer = struct {
             var temp = std.Io.Writer.fixed(&temp_buf);
             if (self.escape_fn(chunk, &temp)) {
                 const escaped_chunk = temp.buffered();
-                var d = [_][]const u8 { escaped_chunk };
+                var d = [_][]const u8{escaped_chunk};
                 try self.out.writeSplatAll(&d, splat);
                 written_bytes += escaped_chunk.len * splat;
                 return written_bytes;

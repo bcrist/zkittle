@@ -6,7 +6,7 @@ pub const escape = @import("escape.zig");
 const Template = @This();
 
 /// N.B. when using escape_writer or url_escape_writer, you must flush before returning or using another of the writers
-pub const Extension_Function = fn(root_ref: Ref, args: []const Ref, writer: *std.Io.Writer, escape_writer: *std.Io.Writer, url_escape_writer: *std.Io.Writer) std.Io.Writer.Error!void;
+pub const Extension_Function = fn (root_ref: Ref, args: []const Ref, writer: *std.Io.Writer, escape_writer: *std.Io.Writer, url_escape_writer: *std.Io.Writer) std.Io.Writer.Error!void;
 
 pub const Render_Options = struct {
     Context: type = struct {},
@@ -20,7 +20,7 @@ pub fn render(self: Template, writer: *std.Io.Writer, obj: anytype, comptime opt
 
 pub const max_stack_size = 31;
 
-pub const Opcode = enum (u8) {
+pub const Opcode = enum(u8) {
     push_var, // offset -- should be followed immediately by push_literal_var_len, print_literal_var_len, field_var_len, push_field_var_len, etc.
     push_literal, // literal_string
     push_literal_var_len, // offset
@@ -68,7 +68,7 @@ pub const Literal_Ref = packed struct {
     length: u9,
 };
 
-pub const Ref = union (enum) {
+pub const Ref = union(enum) {
     nil,
     collection: Collection,
     value: Value,
@@ -151,15 +151,15 @@ pub const Ref = union (enum) {
 pub const Collection = struct {
     data: *const anyopaque,
     size: usize,
-    element: *const fn(self: *const anyopaque, index: usize) Ref,
+    element: *const fn (self: *const anyopaque, index: usize) Ref,
 };
 
 pub const Value = struct {
     data: *const anyopaque,
     as_number: *const fn (self: *const anyopaque) usize = default_as_number,
-    field: *const fn(self: *const anyopaque, name: []const u8) Ref = default_field,
-    print: *const fn(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void = default_print,
-    
+    field: *const fn (self: *const anyopaque, name: []const u8) Ref = default_field,
+    print: *const fn (self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void = default_print,
+
     fn default_as_number(self: *const anyopaque) usize {
         _ = self;
         return 0;
@@ -172,15 +172,15 @@ pub const Value = struct {
     }
 
     fn default_print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("{*}", .{ self });
+        try writer.print("{*}", .{self});
     }
 };
 
 /// Instead of pointing to a number, just store it directly
 pub const Inline_Value = struct {
     data: usize,
-    field: *const fn(self: usize, name: []const u8) Ref = default_field,
-    print: *const fn(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void = default_print,
+    field: *const fn (self: usize, name: []const u8) Ref = default_field,
+    print: *const fn (self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void = default_print,
 
     fn default_field(self: usize, name: []const u8) Ref {
         _ = self;
@@ -189,7 +189,7 @@ pub const Inline_Value = struct {
     }
 
     fn default_print(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("{}", .{ self });
+        try writer.print("{}", .{self});
     }
 };
 
@@ -468,7 +468,7 @@ pub fn execute(self: Template, writer: *std.Io.Writer, root_ref: Ref, escape_fn:
             .end_loop => {
                 if (ref_sp == 0) return error.InvalidTemplate;
                 if (variable_sp < 2) return error.InvalidTemplate;
-                log.debug("{d}: end_loop", .{ pc });
+                log.debug("{d}: end_loop", .{pc});
                 variable_sp -= 2;
                 ref_sp -= 1;
                 pc += 1;
@@ -548,7 +548,7 @@ pub fn number_ref(n: usize) Ref {
             return .nil;
         }
         pub fn print(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            try writer.print("{d}", .{ self });
+            try writer.print("{d}", .{self});
         }
     };
 
@@ -556,7 +556,7 @@ pub fn number_ref(n: usize) Ref {
         .data = n,
         .field = vtable.field,
         .print = vtable.print,
-    }};
+    } };
 }
 
 pub fn bool_ref(b: bool) Ref {
@@ -567,7 +567,7 @@ pub fn bool_ref(b: bool) Ref {
             return .nil;
         }
         pub fn print(self: usize, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            try writer.print("{}", .{ self != 0 });
+            try writer.print("{}", .{self != 0});
         }
     };
 
@@ -575,7 +575,7 @@ pub fn bool_ref(b: bool) Ref {
         .data = @intFromBool(b),
         .field = vtable.field,
         .print = vtable.print,
-    }};
+    } };
 }
 
 pub const Ref_Options = struct {
@@ -592,32 +592,32 @@ pub fn ref_from_ptr(comptime T: type, ptr: *const T, comptime Context: anytype) 
             .data = undefined,
             .size = 0,
             .element = Null_VTable.element,
-        }},
+        } },
         .bool => .{ .value = .{
             .data = ptr,
             .as_number = Bool_VTable(Context).as_number,
             .field = Bool_VTable(Context).field,
             .print = Bool_VTable(Context).print,
-        }},
+        } },
         .int => .{ .value = .{
             .data = ptr,
             .as_number = Int_VTable(T, Context).as_number,
             .field = Int_VTable(T, Context).field,
             .print = Int_VTable(T, Context).print,
-        }},
+        } },
         .comptime_int => @compileError("use number_ref instead!"),
         .float => .{ .value = .{
             .data = ptr,
             .as_number = Float_VTable(T, Context).as_number,
             .field = Float_VTable(T, Context).field,
             .print = Float_VTable(T, Context).print,
-        }},
+        } },
         .@"enum" => .{ .value = .{
             .data = ptr,
             .as_number = Enum_VTable(T, Context).as_number,
             .field = Enum_VTable(T, Context).field,
             .print = Enum_VTable(T, Context).print,
-        }},
+        } },
         .pointer => |info| {
             switch (info.size) {
                 .slice => {
@@ -627,13 +627,13 @@ pub fn ref_from_ptr(comptime T: type, ptr: *const T, comptime Context: anytype) 
                             .as_number = String_VTable(Context).as_number,
                             .field = String_VTable(Context).field,
                             .print = String_VTable(Context).print,
-                        }};
+                        } };
                     } else {
                         return .{ .collection = .{
                             .data = @ptrCast(ptr.ptr),
                             .size = ptr.len,
                             .element = Array_VTable(info.child, Context).element,
-                        }};
+                        } };
                     }
                 },
                 .many, .c => {
@@ -651,20 +651,20 @@ pub fn ref_from_ptr(comptime T: type, ptr: *const T, comptime Context: anytype) 
                     .as_number = Array_String_VTable(info.len, Context).as_number,
                     .field = Array_String_VTable(info.len, Context).field,
                     .print = Array_String_VTable(info.len, Context).print,
-                }};
+                } };
             } else {
                 return .{ .collection = .{
                     .data = @ptrCast(ptr),
                     .size = info.len,
                     .element = Array_VTable(info.child, Context).element,
-                }};
+                } };
             }
         },
         .optional => |info| .{ .collection = .{
             .data = @ptrCast(ptr),
             .size = if (ptr.* == null) 0 else 1,
             .element = Optional_VTable(info.child, Context).element,
-        }},
+        } },
         .@"union" => |info| {
             if (T == Ref) return ptr.*;
             if (info.tag_type == null) @compileError("Unions must be tagged");
@@ -673,7 +673,7 @@ pub fn ref_from_ptr(comptime T: type, ptr: *const T, comptime Context: anytype) 
                 .as_number = Union_VTable(T, Context).as_number,
                 .field = Union_VTable(T, Context).field,
                 .print = Union_VTable(T, Context).print,
-            }};
+            } };
         },
         .@"struct" => |info| {
             if (info.is_tuple) {
@@ -681,7 +681,7 @@ pub fn ref_from_ptr(comptime T: type, ptr: *const T, comptime Context: anytype) 
                     .data = ptr,
                     .size = info.field_names.len,
                     .element = Struct_VTable(T, Context).tuple_element,
-                }};
+                } };
             } else if (T == Collection) {
                 return .{ .collection = ptr.* };
             } else if (T == Value) {
@@ -694,7 +694,7 @@ pub fn ref_from_ptr(comptime T: type, ptr: *const T, comptime Context: anytype) 
                     .as_number = Struct_VTable(T, Context).as_number,
                     .field = Struct_VTable(T, Context).field,
                     .print = Struct_VTable(T, Context).print,
-                }};
+                } };
             }
         },
         .@"fn" => .{ .func = ptr },
@@ -714,7 +714,7 @@ pub const Null_VTable = struct {
 fn Bool_VTable(comptime Context: anytype) type {
     return struct {
         pub fn as_number(self: *const anyopaque) usize {
-            const ptr: *const bool = @alignCast(@ptrCast(self));
+            const ptr: *const bool = @ptrCast(@alignCast(self));
             return @intFromBool(ptr.*);
         }
 
@@ -725,10 +725,10 @@ fn Bool_VTable(comptime Context: anytype) type {
         }
 
         pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            const ptr: *const bool = @alignCast(@ptrCast(self));
+            const ptr: *const bool = @ptrCast(@alignCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
-                .pointer => try writer.print(Context, .{ ptr.* }),
+                .pointer => try writer.print(Context, .{ptr.*}),
                 else => try writer.writeAll(if (ptr.*) "true" else "false"),
             }
         }
@@ -738,7 +738,7 @@ fn Bool_VTable(comptime Context: anytype) type {
 fn Int_VTable(comptime T: type, comptime Context: anytype) type {
     return struct {
         pub fn as_number(self: *const anyopaque) usize {
-            const ptr: *const T = @alignCast(@ptrCast(self));
+            const ptr: *const T = @ptrCast(@alignCast(self));
             return @intCast(ptr.*);
         }
 
@@ -749,11 +749,11 @@ fn Int_VTable(comptime T: type, comptime Context: anytype) type {
         }
 
         pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            const ptr: *const T = @alignCast(@ptrCast(self));
+            const ptr: *const T = @ptrCast(@alignCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
-                .pointer => try writer.print(Context, .{ ptr.* }),
-                else => try writer.print("{d}", .{ ptr.* }),
+                .pointer => try writer.print(Context, .{ptr.*}),
+                else => try writer.print("{d}", .{ptr.*}),
             }
         }
     };
@@ -762,7 +762,7 @@ fn Int_VTable(comptime T: type, comptime Context: anytype) type {
 fn Float_VTable(comptime T: type, comptime Context: anytype) type {
     return struct {
         pub fn as_number(self: *const anyopaque) usize {
-            const ptr: *const T = @alignCast(@ptrCast(self));
+            const ptr: *const T = @ptrCast(@alignCast(self));
             return @intFromFloat(ptr.*);
         }
 
@@ -773,11 +773,11 @@ fn Float_VTable(comptime T: type, comptime Context: anytype) type {
         }
 
         pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            const ptr: *const T = @alignCast(@ptrCast(self));
+            const ptr: *const T = @ptrCast(@alignCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
-                .pointer => try writer.print(Context, .{ ptr.* }),
-                else => try writer.print("{d}", .{ ptr.* }),
+                .pointer => try writer.print(Context, .{ptr.*}),
+                else => try writer.print("{d}", .{ptr.*}),
             }
         }
     };
@@ -787,13 +787,13 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
     const enum_info = @typeInfo(T).@"enum";
     return struct {
         pub fn as_number(self: *const anyopaque) usize {
-            const ptr: *const T = @alignCast(@ptrCast(self));
-            return @intCast(@intFromEnum(ptr.*));
+            const ptr: *const T = @ptrCast(@alignCast(self));
+            return @intCast(@backingInt(ptr.*));
         }
 
         pub fn field(self: *const anyopaque, name: []const u8) Ref {
-            const ptr: *const T = @alignCast(@ptrCast(self));
-            const ordinal = @intFromEnum(ptr.*);
+            const ptr: *const T = @ptrCast(@alignCast(self));
+            const ordinal = @backingInt(ptr.*);
             inline for (enum_info.field_names, enum_info.field_values) |field_name, field_value| {
                 if (field_value == ordinal and std.mem.eql(u8, name, field_name)) {
                     return .{ .value = .{
@@ -801,7 +801,7 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
                         .as_number = as_number,
                         .field = field,
                         .print = print,
-                    }};
+                    } };
                 }
             }
             inline for (enum_info.decl_names) |decl| {
@@ -815,7 +815,7 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
         }
 
         pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            const ptr: *const T = @alignCast(@ptrCast(self));
+            const ptr: *const T = @ptrCast(@alignCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
                 .pointer => try format_value(T, Context, ptr, writer),
@@ -824,7 +824,7 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
                     if (std.enums.tagName(T, ptr.*)) |name| {
                         try writer.writeAll(name);
                     } else {
-                        try writer.print("({d})", .{ @intFromEnum(ptr.*) });
+                        try writer.print("({d})", .{@backingInt(ptr.*)});
                     }
                 },
             }
@@ -835,12 +835,12 @@ fn Enum_VTable(comptime T: type, comptime Context: anytype) type {
 fn String_VTable(comptime Context: anytype) type {
     return struct {
         pub fn as_number(self: *const anyopaque) usize {
-            const ptr: *const []const u8 = @alignCast(@ptrCast(self));
+            const ptr: *const []const u8 = @ptrCast(@alignCast(self));
             return @intFromBool(ptr.*.len > 0);
         }
 
         pub fn field(self: *const anyopaque, name: []const u8) Ref {
-            const ptr: *const []const u8 = @alignCast(@ptrCast(self));
+            const ptr: *const []const u8 = @ptrCast(@alignCast(self));
             if (std.mem.eql(u8, name, "len")) {
                 return number_ref(ptr.len);
             }
@@ -848,10 +848,10 @@ fn String_VTable(comptime Context: anytype) type {
         }
 
         pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            const ptr: *const []const u8 = @alignCast(@ptrCast(self));
+            const ptr: *const []const u8 = @ptrCast(@alignCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
-                .pointer => try writer.print(Context, .{ ptr.* }),
+                .pointer => try writer.print(Context, .{ptr.*}),
                 else => try writer.writeAll(ptr.*),
             }
         }
@@ -874,20 +874,20 @@ fn Array_String_VTable(comptime length: usize, comptime Context: anytype) type {
         }
 
         pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            const ptr: *const [length]u8 = @alignCast(@ptrCast(self));
+            const ptr: *const [length]u8 = @ptrCast(@alignCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr, writer),
-                .pointer => try writer.print(Context, .{ ptr }),
+                .pointer => try writer.print(Context, .{ptr}),
                 else => try writer.writeAll(ptr),
             }
-        }       
+        }
     };
 }
 
 fn Array_VTable(comptime T: type, comptime Context: anytype) type {
     return struct {
         pub fn element(self: *const anyopaque, index: usize) Ref {
-            const ptr: [*]const T = @alignCast(@ptrCast(self));
+            const ptr: [*]const T = @ptrCast(@alignCast(self));
             return ref_from_ptr(@TypeOf(ptr[index]), &ptr[index], Context);
         }
     };
@@ -897,7 +897,7 @@ fn Optional_VTable(comptime T: type, comptime Context: anytype) type {
     return struct {
         pub fn element(self: *const anyopaque, index: usize) Ref {
             _ = index;
-            const ptr: *const ?T = @alignCast(@ptrCast(self));
+            const ptr: *const ?T = @ptrCast(@alignCast(self));
             if (ptr.*) |*value| {
                 return ref_from_ptr(@TypeOf(value.*), value, Context);
             } else {
@@ -917,8 +917,8 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
         }
 
         pub fn field(self: *const anyopaque, name: []const u8) Ref {
-            const ptr: *const T = @alignCast(@ptrCast(self));
-            const ordinal = @intFromEnum(ptr.*);
+            const ptr: *const T = @ptrCast(@alignCast(self));
+            const ordinal = @backingInt(ptr.*);
             inline for (0.., union_info.field_names, union_info.field_types) |i, field_name, field_type| {
                 if (i == ordinal and std.mem.eql(u8, name, field_name)) {
                     return ref_from_ptr(field_type, &@field(ptr.*, field_name), Child_Context(Context, field_name));
@@ -942,7 +942,7 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
         }
 
         pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            const ptr: *const T = @alignCast(@ptrCast(self));
+            const ptr: *const T = @ptrCast(@alignCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => {
                     try Context(ptr.*, writer);
@@ -950,7 +950,7 @@ fn Union_VTable(comptime T: type, comptime Context: anytype) type {
                 .pointer, .array => try format_value(T, Context, ptr, writer),
                 else => {
                     if (try maybe_format_value(T, "{f}", ptr, writer)) return;
-                    const ordinal = @intFromEnum(ptr.*);
+                    const ordinal = @backingInt(ptr.*);
                     inline for (0.., union_info.field_names, union_info.field_types) |i, field_name, field_type| {
                         if (i == ordinal) {
                             const payload_ref = ref_from_ptr(field_type, &@field(ptr.*, field_name), Child_Context(Context, field_name));
@@ -967,7 +967,7 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
     const struct_info = @typeInfo(T).@"struct";
     return struct {
         pub fn tuple_element(self: *const anyopaque, index: usize) Ref {
-            const ptr: *const T = @alignCast(@ptrCast(self));
+            const ptr: *const T = @ptrCast(@alignCast(self));
             inline for (0.., struct_info.field_names, struct_info.field_types, struct_info.field_attrs) |i, field_name, field_type, field_attrs| {
                 if (i == index) {
                     if (field_attrs.@"comptime") {
@@ -987,7 +987,7 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
         }
 
         pub fn field(self: *const anyopaque, name: []const u8) Ref {
-            const ptr: *const T = @alignCast(@ptrCast(self));
+            const ptr: *const T = @ptrCast(@alignCast(self));
             inline for (struct_info.field_names, struct_info.field_types, struct_info.field_attrs) |field_name, field_type, field_attrs| {
                 if (std.mem.eql(u8, name, field_name)) {
                     if (field_attrs.@"comptime") {
@@ -1013,7 +1013,7 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
         }
 
         pub fn print(self: *const anyopaque, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            const ptr: *const T = @alignCast(@ptrCast(self));
+            const ptr: *const T = @ptrCast(@alignCast(self));
             switch (@typeInfo(@TypeOf(Context))) {
                 .@"fn" => try Context(ptr.*, writer),
                 .pointer, .array => try format_value(T, Context, ptr, writer),
@@ -1042,7 +1042,7 @@ fn Struct_VTable(comptime T: type, comptime Context: anytype) type {
 
 fn format_value(comptime T: type, comptime fmt: []const u8, ptr: *const T, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     if (try maybe_format_value(T, fmt, ptr, writer)) return;
-    try writer.print(fmt, .{ ptr.* });
+    try writer.print(fmt, .{ptr.*});
 }
 
 fn maybe_format_value(comptime T: type, comptime fmt: []const u8, ptr: *const T, writer: *std.Io.Writer) std.Io.Writer.Error!bool {
@@ -1059,11 +1059,11 @@ fn maybe_format_value(comptime T: type, comptime fmt: []const u8, ptr: *const T,
                 if (info.param_types.len >= 2 and info.param_types[1].? == *std.Io.Writer) {
                     switch (@typeInfo(info.param_types[0].?)) {
                         .pointer => |ptrinfo| if (ptrinfo.child == T) {
-                            try writer.print(fmt, .{ ptr });
+                            try writer.print(fmt, .{ptr});
                             return true;
                         },
                         else => if (info.param_types[0].? == T) {
-                            try writer.print(fmt, .{ ptr.* });
+                            try writer.print(fmt, .{ptr.*});
                             return true;
                         },
                     }
@@ -1074,8 +1074,6 @@ fn maybe_format_value(comptime T: type, comptime fmt: []const u8, ptr: *const T,
     }
     return false;
 }
-
-
 
 fn Child_Context(comptime Context: anytype, comptime field: []const u8) Child_Context_Type(Context, field) {
     if (@TypeOf(Context) == type and @typeInfo(Context) == .@"struct" and @hasDecl(Context, field)) {

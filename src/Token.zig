@@ -22,7 +22,7 @@ pub const List = struct {
     }
 };
 
-pub const Kind = enum (u8) {
+pub const Kind = enum(u8) {
     eof = 0,
     invalid,
     literal,
@@ -36,19 +36,19 @@ pub const Kind = enum (u8) {
     kw_exists,
     kw_url,
     kw_count,
-    condition,      // ?
-    within,         // : (when followed by whitespace or end of command block)
-    fn_call,        // : (when not followed by whitespace or end of command block)
-    otherwise,      // ;
-    end,            // ~
-    parent,         // ^
-    child,          // .
-    fragment,       // #
-    self,           // *
-    fallback,       // |
-    alternative,    // /
-    open_paren,     // (
-    close_paren,    // )
+    condition, // ?
+    within, // : (when followed by whitespace or end of command block)
+    fn_call, // : (when not followed by whitespace or end of command block)
+    otherwise, // ;
+    end, // ~
+    parent, // ^
+    child, // .
+    fragment, // #
+    self, // *
+    fallback, // |
+    alternative, // /
+    open_paren, // (
+    close_paren, // )
 };
 
 pub fn lex(allocator: std.mem.Allocator, text: []const u8) !List {

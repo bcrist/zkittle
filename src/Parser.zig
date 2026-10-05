@@ -39,7 +39,7 @@ pub const Literal_Ref = packed struct {
 
         if (self.offset > std.math.maxInt(Offset)) return null;
         if (self.length > std.math.maxInt(Length)) return null;
-        
+
         return .{
             .offset = @intCast(self.offset),
             .length = @intCast(self.length),
@@ -111,7 +111,7 @@ pub fn finish(self: *Parser, allocator: std.mem.Allocator, clear_literal_data: b
     self.ref_stack_depth = 0;
     self.reserved_stack_slots = 0;
     self.fragments.clearRetainingCapacity();
-    
+
     if (clear_literal_data) {
         self.literal_data.clearRetainingCapacity();
         self.literal_dedup.clearRetainingCapacity();
@@ -147,7 +147,7 @@ fn parse_item(self: *Parser) !bool {
                 literal_ref.length += next_ref.length;
                 self.next_token += 1;
             }
-            
+
             try self.add_literal_ref_instruction(.print_literal, literal_ref);
             return true;
         },
@@ -301,7 +301,7 @@ fn parse_within(self: *Parser) !bool {
     try self.add_loop_instruction(.increment_and_retry_if_less, loop_begin_instruction);
     self.finalize_skip_instruction(skip_if_equal_instruction, self.pc());
     try self.add_basic_instruction(.end_loop);
-    
+
     var otherwise_token: ?usize = self.next_token;
     if (self.try_token(.otherwise)) {
         const skip_to_end_of_block_instruction = self.pc();
@@ -345,7 +345,7 @@ fn parse_expression(self: *Parser) !bool {
         try self.report_error("Expected field name, index, '#', or '@exists'", .{});
         return error.InvalidTemplate;
     }
-    
+
     if (self.try_token(.fallback)) {
         try self.add_basic_instruction(.dupe_ref_0);
         try self.add_basic_instruction(.is_ref_nonnil);
@@ -374,9 +374,7 @@ fn parse_expression(self: *Parser) !bool {
 
 fn parse_ref(self: *Parser) !bool {
     switch (self.token_kinds[self.next_token]) {
-        .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_url,
-        .condition, .within, .otherwise, .end, .child, .fallback, .alternative,
-        .kw_exists, .open_paren, .close_paren, .fragment, .fn_call => return false,
+        .invalid, .eof, .literal, .kw_resource, .kw_include, .kw_raw, .kw_url, .condition, .within, .otherwise, .end, .child, .fallback, .alternative, .kw_exists, .open_paren, .close_paren, .fragment, .fn_call => return false,
         .id, .number, .parent, .kw_count, .self, .kw_index, .string_literal => {},
     }
 
@@ -423,7 +421,7 @@ fn parse_ref(self: *Parser) !bool {
 
     if (parent_count + self.reserved_stack_slots > self.ref_stack_depth) {
         var buf: [128]u8 = undefined;
-        const msg = try std.fmt.bufPrint(&buf, "Not enough parent data contexts; only {} exist", .{ self.ref_stack_depth });
+        const msg = try std.fmt.bufPrint(&buf, "Not enough parent data contexts; only {} exist", .{self.ref_stack_depth});
         try self.report_error(msg, .{ .token = self.next_token - 1 });
         parent_count = self.ref_stack_depth - self.reserved_stack_slots;
     }
@@ -440,19 +438,15 @@ fn parse_ref(self: *Parser) !bool {
 fn parse_field_or_index_or_count(self: *Parser) !bool {
     if (self.try_id()) |field_name| {
         try self.add_literal_instruction(.field, field_name);
-
     } else if (self.try_string_literal()) |field_name| {
         try self.add_literal_instruction(.field, field_name);
-
     } else if (self.try_token(.number)) {
         const index_str = self.token_spans[self.next_token - 1];
         const index = try std.fmt.parseInt(u32, index_str, 10);
         try self.add_offset_instruction(.index, index);
-
     } else if (self.try_token(.kw_count)) {
         try self.add_basic_instruction(.as_number);
         try self.add_basic_instruction(.number_to_ref);
-
     } else {
         return false;
     }
